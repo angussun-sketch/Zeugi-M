@@ -1,36 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Zeugi-M
 
-## Getting Started
+食品成本計算器（Next.js + Prisma + PostgreSQL）。
 
-First, run the development server:
+## Local Development
+
+1. 啟動資料庫（可選，若你本機沒有 PostgreSQL）
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+docker compose up -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. 安裝套件與啟動開發環境
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm ci
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+3. 常用指令
 
-## Learn More
+```bash
+npm run lint
+npm run build
+npm run migrate:deploy
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Deploy on Zeabur
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+此專案已提供 `zbpack.json`，Zeabur 會使用：
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `build_command`: `npm run build`
+- `start_command`: `npm run migrate:deploy && npm run start`
 
-## Deploy on Vercel
+### 部署步驟
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. 在 Zeabur 匯入此 Git Repo。
+2. 新增 PostgreSQL 服務。
+3. 在 Web 服務環境變數設定 `DATABASE_URL`（指向 Zeabur PostgreSQL）。
+4. 重新部署。
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Required Environment Variables
+
+- `DATABASE_URL`: Prisma 連線字串（PostgreSQL）

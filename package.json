@@ -2,10 +2,15 @@
   "name": "zeugi-m",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@10.8.2",
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
+    "migrate:deploy": "prisma migrate deploy",
     "lint": "eslint"
   },
   "dependencies": {
