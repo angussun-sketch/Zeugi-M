@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============ 原料 & 採購 ============
+
+model Ingredient {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  measure_type String   // "weight" | "volume"
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  purchase_records PurchaseRecord[]
+  batch_inputs     BatchInput[]
+}
+
+model PurchaseRecord {
+  id                String     @id @default(cuid())
+  ingredient_id     String
+  ingredient        Ingredient @relation(fields: [ingredient_id], references: [id], onDelete: Cascade)
+  purchase_price    Float      // 採購總價
+  purchase_qty_base Float      // 換算後總量 (g 或 cc)
+  purchase_unit     String     // 使用者輸入單位 (g/kg/台斤/cc)
+  package_count     Int?       // 可選：幾包/罐
+  per_package_qty   Float?     // 每包/罐多少
+  per_package_unit  String?    // 每包/罐單位
+  unit_cost_base    Float      // 元/g 或 元/cc
+  is_current        Boolean    @default(true)
+  recorded_at       DateTime   @default(now())
+
+  @@index([ingredient_id, is_current])
+}
+
+// ============ 批次 & 分攤 ============
+
+model Batch {
+  id           String   @id @default(cuid())
+  name         String
+  alloc_method String   // "by_pieces" | "by_filling_weight"
+  total_cost   Float?
+  notes        String?
+  created_at   DateTime @default(now())
+
+  inputs  BatchInput[]
+  outputs BatchOutput[]
+}
+
+model BatchInput {
+  id             String     @id @default(cuid())
+  batch_id       String
+  batch          Batch      @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+  ingredient_id  String
+  ingredient     Ingredient @relation(fields: [ingredient_id], references: [id])
+  qty_input      Float      // 使用者輸入數量
+  input_unit     String     // 使用者輸入單位
+  qty_base       Float      // 換算後 (g 或 cc)
+  unit_cost_used Float      // 快照當時單價
+  cost           Float      // = qty_base * unit_cost_used
+  is_shared      Boolean    @default(true)
+  dedicated_to   String?    // -> BatchOutput.id (若專用)
+
+  @@index([batch_id])
+}
+
+model BatchOutput {
+  id                  String @id @default(cuid())
+  batch_id            String
+  batch               Batch  @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+  flavor_name         String
+  pieces              Int
+  filling_g_per_piece Float?
+  total_cost          Float?
+  cost_per_piece      Float?
+
+  @@index([batch_id])
+}
+
+// ============ 額外開銷 ============
+
+model ExpenseCategory {
+  id      String          @id @default(cuid())
+  name    String          @unique
+  type    String          // "fixed" | "variable" | "recurring"
+  records ExpenseRecord[]
+}
+
+model ExpenseRecord {
+  id           String          @id @default(cuid())
+  category_id  String
+  category     ExpenseCategory @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  amount       Float
+  description  String?
+  period_start DateTime?
+  period_end   DateTime?
+  recorded_at  DateTime        @default(now())
+
+  @@index([category_id])
+}
+
+// ============ 人事管理 ============
+
+model Employee {
+  id            String    @id @default(cuid())
+  name          String
+  role          String?
+  salary_type   String    // "monthly" | "hourly" | "daily"
+  salary_amount Float
+  hire_date     DateTime
+  leave_date    DateTime?
+  is_active     Boolean   @default(true)
+  notes         String?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  attendances    Attendance[]
+  salary_records SalaryRecord[]
+}
+
+model Attendance {
+  id          String   @id @default(cuid())
+  employee_id String
+  employee    Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  date        DateTime
+  hours       Float?
+  status      String   // "present" | "absent" | "leave" | "half_day"
+  notes       String?
+
+  @@index([employee_id, date])
+}
+
+model SalaryRecord {
+  id               String    @id @default(cuid())
+  employee_id      String
+  employee         Employee  @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  period_year      Int
+  period_month     Int
+  base_amount      Float
+  overtime_pay     Float?
+  deductions       Float?
+  bonus            Float?
+  labor_insurance  Float?
+  health_insurance Float?
+  total_amount     Float
+  paid_at          DateTime?
+  created_at       DateTime  @default(now())
+
+  @@unique([employee_id, period_year, period_month])
+}
