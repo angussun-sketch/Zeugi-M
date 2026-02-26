@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getBatch } from "@/actions/batches";
 import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getBatches } from "@/actions/batches";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
