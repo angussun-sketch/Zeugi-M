@@ -4,8 +4,11 @@ import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
-  // 簡單 token 驗證（防止外部隨意觸發）
+  // Token 驗證：production 必須設定 CRON_SECRET，dev 環境可選
   const token = process.env.CRON_SECRET;
+  if (!token && process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 500 });
+  }
   if (token) {
     const authHeader = request.headers.get("authorization");
     if (authHeader !== `Bearer ${token}`) {

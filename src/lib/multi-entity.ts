@@ -64,10 +64,14 @@ export async function assertOrgOwns(
   id: string,
 ) {
   const { orgId } = await getCurrentEntity();
-  const record = await (prisma[model] as any).findUnique({
-    where: { id },
-    select: { org_id: true },
-  });
+  const s = { org_id: true } as const;
+  const w = { id } as const;
+  const record =
+    model === "ingredient" ? await prisma.ingredient.findUnique({ where: w, select: s }) :
+    model === "supplier" ? await prisma.supplier.findUnique({ where: w, select: s }) :
+    model === "account" ? await prisma.account.findUnique({ where: w, select: s }) :
+    model === "fundAccount" ? await prisma.fundAccount.findUnique({ where: w, select: s }) :
+    await prisma.cashflowCategory.findUnique({ where: w, select: s });
   if (!record) throw new Error("記錄不存在");
   if (record.org_id !== orgId) throw new Error("無權限操作此記錄");
 }
@@ -94,10 +98,15 @@ export async function assertEntityOwns(
     if (record.org_id !== orgId) throw new Error("無權限操作此記錄");
     return;
   }
-  const record = await (prisma[model] as any).findUnique({
-    where: { id },
-    select: { entity_id: true, entity: { select: { org_id: true } } },
-  });
+  const s = { entity: { select: { org_id: true } } } as const;
+  const w = { id } as const;
+  const record =
+    model === "purchaseOrder" ? await prisma.purchaseOrder.findUnique({ where: w, select: s }) :
+    model === "batch" ? await prisma.batch.findUnique({ where: w, select: s }) :
+    model === "fixedAsset" ? await prisma.fixedAsset.findUnique({ where: w, select: s }) :
+    model === "cashflowRecord" ? await prisma.cashflowRecord.findUnique({ where: w, select: s }) :
+    model === "recurringCashflow" ? await prisma.recurringCashflow.findUnique({ where: w, select: s }) :
+    await prisma.transaction.findUnique({ where: w, select: s });
   if (!record) throw new Error("記錄不存在");
   if (record.entity.org_id !== orgId) throw new Error("無權限操作此記錄");
 }

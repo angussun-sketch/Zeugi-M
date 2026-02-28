@@ -12,11 +12,12 @@ async function assertBatchChildOwns(
   id: string,
 ) {
   const { orgId } = await getCurrentEntity();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic model access, same pattern as assertOrgOwns
-  const record = await (prisma[model] as any).findUnique({
-    where: { id },
-    select: { batch: { select: { entity: { select: { org_id: true } } } } },
-  });
+  const s = { batch: { select: { entity: { select: { org_id: true } } } } } as const;
+  const w = { id } as const;
+  const record =
+    model === "batchInput"
+      ? await prisma.batchInput.findUnique({ where: w, select: s })
+      : await prisma.batchOutput.findUnique({ where: w, select: s });
   if (!record) throw new Error("記錄不存在");
   if (record.batch.entity.org_id !== orgId) throw new Error("無權限操作此記錄");
 }
