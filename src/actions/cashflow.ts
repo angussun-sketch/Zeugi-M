@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@/generated/prisma/client";
-import { createTransaction } from "@/actions/finance";
+import { createTransaction, deleteLinkedTransaction } from "@/actions/finance";
 import { getCurrentEntity } from "@/lib/multi-entity";
 
 // ==================== Helper ====================
@@ -244,20 +244,7 @@ export async function createCashflowRecord(data: {
 }) {
   const entityId = data.entity_id ?? (await getCurrentEntity()).entityId;
 
-  const record = await prisma.cashflowRecord.create({
-    data: {
-      direction: data.direction,
-      category_id: data.category_id,
-      fund_account_id: data.fund_account_id || null,
-      amount: data.amount,
-      record_date: new Date(data.record_date),
-      description: data.description || null,
-      source: "manual",
-      entity_id: entityId,
-    },
-  });
-
-  // 取得分類與帳戶資訊以產生交易
+  // Pre-fetch outside transaction (read-only, safe)
   const category = await prisma.cashflowCategory.findUnique({
     where: { id: data.category_id },
   });
@@ -272,28 +259,50 @@ export async function createCashflowRecord(data: {
     }
   }
 
-  // 自動產生財務交易
   const sourceType =
     data.direction === "income" ? "cashflow_income" : "cashflow_expense";
 
-  await createTransaction({
-    transaction_date: data.record_date,
-    amount: data.amount,
-    description: data.description ?? category?.name ?? data.direction,
-    source_type: sourceType,
-    source_id: record.id,
-    payment_method: paymentMethod,
-    has_payment: true,
-    has_receipt: false,
-    has_invoice: false,
-    tax_treatment: "deductible",
-    expense_category_name: category?.account_code,
-    entity_id: entityId,
+  const result = await prisma.$transaction(async (tx) => {
+    const record = await tx.cashflowRecord.create({
+      data: {
+        direction: data.direction,
+        category_id: data.category_id,
+        fund_account_id: data.fund_account_id || null,
+        amount: data.amount,
+        record_date: new Date(data.record_date),
+        description: data.description || null,
+        source: "manual",
+        entity_id: entityId,
+      },
+    });
+
+    const transaction = await createTransaction({
+      transaction_date: data.record_date,
+      amount: data.amount,
+      description: data.description ?? category?.name ?? data.direction,
+      source_type: sourceType,
+      source_id: record.id,
+      payment_method: paymentMethod,
+      has_payment: true,
+      has_receipt: false,
+      has_invoice: false,
+      tax_treatment: "deductible",
+      expense_category_name: category?.account_code,
+      entity_id: entityId,
+    }, tx);
+
+    // Write back transaction_id FK
+    await tx.cashflowRecord.update({
+      where: { id: record.id },
+      data: { transaction_id: transaction.id },
+    });
+
+    return { ...record, transaction_id: transaction.id };
   });
 
   revalidatePath("/cashflow");
   revalidatePath("/finance");
-  return record;
+  return result;
 }
 
 export async function updateCashflowRecord(
@@ -306,22 +315,70 @@ export async function updateCashflowRecord(
     description?: string;
   },
 ) {
-  const record = await prisma.cashflowRecord.update({
-    where: { id },
-    data: {
-      ...data,
-      record_date: data.record_date
-        ? new Date(data.record_date)
-        : undefined,
-    },
+  const result = await prisma.$transaction(async (tx) => {
+    const record = await tx.cashflowRecord.update({
+      where: { id },
+      data: {
+        ...data,
+        record_date: data.record_date ? new Date(data.record_date) : undefined,
+      },
+      include: { category: true, fund_account: true },
+    });
+
+    // Delete old Transaction, recreate with new data
+    const sourceType =
+      record.direction === "income" ? "cashflow_income" : "cashflow_expense";
+    await deleteLinkedTransaction(sourceType, id, tx);
+
+    const paymentMethod = record.fund_account
+      ? fundAccountToPaymentMethod(record.fund_account.account_type)
+      : "cash";
+
+    const transaction = await createTransaction({
+      transaction_date: record.record_date.toISOString(),
+      amount: record.amount,
+      description: record.description ?? record.category.name ?? record.direction,
+      source_type: sourceType,
+      source_id: record.id,
+      payment_method: paymentMethod,
+      has_payment: true,
+      has_receipt: false,
+      has_invoice: false,
+      tax_treatment: "deductible",
+      expense_category_name: record.category.account_code,
+      entity_id: record.entity_id,
+    }, tx);
+
+    // Update FK
+    await tx.cashflowRecord.update({
+      where: { id },
+      data: { transaction_id: transaction.id },
+    });
+
+    return record;
   });
+
   revalidatePath("/cashflow");
-  return record;
+  revalidatePath("/finance");
+  return result;
 }
 
 export async function deleteCashflowRecord(id: string) {
-  await prisma.cashflowRecord.delete({ where: { id } });
+  await prisma.$transaction(async (tx) => {
+    const record = await tx.cashflowRecord.findUnique({
+      where: { id },
+      select: { direction: true },
+    });
+    if (!record) return;
+
+    const sourceType =
+      record.direction === "income" ? "cashflow_income" : "cashflow_expense";
+    await deleteLinkedTransaction(sourceType, id, tx);
+    await tx.cashflowRecord.delete({ where: { id } });
+  });
+
   revalidatePath("/cashflow");
+  revalidatePath("/finance");
 }
 
 // ==================== 循環收支 ====================
