@@ -107,6 +107,7 @@ export const PAYMENT_ACCOUNT: Record<string, string> = {
   bank: CASH_IN_BANKS,
   credit_card: OTHER_PAYABLES,
   owner_advance: OWNER_ACCOUNT_CREDIT,
+  non_cash: CASH_ON_HAND, // fallback, actual account overridden by credit_account_override
 };
 
 /** 費用分類名稱 → 科目代碼（營業費用為主，生產相關另行處理） */

@@ -196,6 +196,7 @@ export async function createTransaction(data: {
   proof_type?: string;
   proof_note?: string;
   expense_category_name?: string;
+  credit_account_override?: string;
   entity_id?: string;
 }, db: TxClient | PrismaClient = prisma) {
   // 計算三方匹配狀態
@@ -242,6 +243,7 @@ export async function createTransaction(data: {
   const entries = generateEntries({
     ...tx,
     expense_category_name: data.expense_category_name,
+    credit_account_override: data.credit_account_override,
   });
   await applyJournalEntries(tx.id, entries, entityId, db);
 

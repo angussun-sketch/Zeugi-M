@@ -38,6 +38,8 @@ type TransactionInput = {
   reason_code: string | null;
   // 用來決定費用科目
   expense_category_name?: string;
+  // 覆寫貸方科目（用於非現金交易如折舊）
+  credit_account_override?: string;
 };
 
 export type JournalLineInput = {
@@ -166,7 +168,8 @@ export function generateEntries(tx: TransactionInput): GeneratedEntries {
     } else {
       lines.push({ account_code: expenseCode, debit: tx.amount, credit: 0 });
     }
-    lines.push({ account_code: paymentCode, debit: 0, credit: tx.amount });
+    const creditCode = tx.credit_account_override || paymentCode;
+    lines.push({ account_code: creditCode, debit: 0, credit: tx.amount });
 
     const internal: JournalEntryInput = {
       book_type: "internal",
