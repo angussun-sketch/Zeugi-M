@@ -1,5 +1,6 @@
 "use server";
 
+import { PrismaClient } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 import {
@@ -7,6 +8,8 @@ import {
   type JournalEntryInput,
 } from "@/lib/journal-engine";
 import { getCurrentEntity } from "@/lib/multi-entity";
+
+type TxClient = Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
 
 // ============ 科目表 ============
 
@@ -113,18 +116,19 @@ async function applyJournalEntries(
   transactionId: string,
   entries: GeneratedEntriesResult,
   entityId: string,
+  db: TxClient | PrismaClient = prisma,
 ) {
   // 刪除舊分錄 + 調節項
-  await prisma.journalEntry.deleteMany({
+  await db.journalEntry.deleteMany({
     where: { transaction_id: transactionId },
   });
-  await prisma.reconciliationItem.deleteMany({
+  await db.reconciliationItem.deleteMany({
     where: { transaction_id: transactionId },
   });
 
   // 取得所有科目 code → id 映射（同 org）
   const { orgId } = await getCurrentEntity();
-  const accounts = await prisma.account.findMany({
+  const accounts = await db.account.findMany({
     where: { org_id: orgId },
     select: { id: true, code: true },
   });
@@ -132,7 +136,7 @@ async function applyJournalEntries(
   for (const a of accounts) codeToId[a.code] = a.id;
 
   async function createEntry(entry: JournalEntryInput) {
-    await prisma.journalEntry.create({
+    await db.journalEntry.create({
       data: {
         transaction_id: transactionId,
         entity_id: entityId,
@@ -157,7 +161,7 @@ async function applyJournalEntries(
   if (entries.tax) await createEntry(entries.tax);
   // 調節項
   if (entries.reconciliation) {
-    await prisma.reconciliationItem.create({
+    await db.reconciliationItem.create({
       data: {
         transaction_id: transactionId,
         ...entries.reconciliation,
@@ -193,7 +197,7 @@ export async function createTransaction(data: {
   proof_note?: string;
   expense_category_name?: string;
   entity_id?: string;
-}) {
+}, db: TxClient | PrismaClient = prisma) {
   // 計算三方匹配狀態
   const flags = [
     data.has_payment ?? false,
@@ -205,7 +209,7 @@ export async function createTransaction(data: {
     trueCount === 3 ? "fully_matched" : trueCount > 0 ? "partial" : "unmatched";
 
   const entityId = data.entity_id ?? (await getCurrentEntity()).entityId;
-  const tx = await prisma.transaction.create({
+  const tx = await db.transaction.create({
     data: {
       transaction_date: new Date(data.transaction_date),
       amount: data.amount,
@@ -239,7 +243,7 @@ export async function createTransaction(data: {
     ...tx,
     expense_category_name: data.expense_category_name,
   });
-  await applyJournalEntries(tx.id, entries, entityId);
+  await applyJournalEntries(tx.id, entries, entityId, db);
 
   revalidatePath("/finance");
   return tx;
@@ -575,8 +579,11 @@ export async function getUnmatchedDocuments() {
 
 // ============ PO / Expense 整合 ============
 
-export async function createTransactionFromPO(purchaseOrderId: string) {
-  const po = await prisma.purchaseOrder.findUnique({
+export async function createTransactionFromPO(
+  purchaseOrderId: string,
+  db: TxClient | PrismaClient = prisma,
+) {
+  const po = await db.purchaseOrder.findUnique({
     where: { id: purchaseOrderId },
     include: { supplier: true, items: true },
   });
@@ -596,6 +603,25 @@ export async function createTransactionFromPO(purchaseOrderId: string) {
     has_invoice: false,
     tax_treatment: "deductible",
     expense_category_name: "進貨成本",
-  });
+  }, db);
 }
+
+// ============ Transaction Helper ============
+
+export async function deleteLinkedTransaction(
+  sourceType: string,
+  sourceId: string,
+  db: TxClient | PrismaClient = prisma,
+) {
+  const existing = await db.transaction.findFirst({
+    where: { source_type: sourceType, source_id: sourceId },
+    select: { id: true },
+  });
+  if (existing) {
+    await db.transaction.delete({ where: { id: existing.id } });
+  }
+  return existing?.id ?? null;
+}
+
+export type { TxClient };
 
