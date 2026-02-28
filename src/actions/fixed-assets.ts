@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/db";
 import { revalidatePath } from "next/cache";
-import { createTransaction } from "@/actions/finance";
+import { createTransaction, deleteLinkedTransaction } from "@/actions/finance";
 import { getCurrentEntity } from "@/lib/multi-entity";
 import { ASSET_ACCOUNT, ACCUM_DEPR_ACCOUNT } from "@/lib/chart-of-accounts";
 
@@ -49,35 +49,39 @@ export async function createFixedAsset(data: {
       : 0;
 
   const { entityId } = await getCurrentEntity();
-  const asset = await prisma.fixedAsset.create({
-    data: {
-      name: data.name,
-      category: data.category,
-      acquisition_date: new Date(data.acquisition_date),
-      cost: data.cost,
-      residual_value: residual,
-      useful_life_months,
-      monthly_depreciation,
-      net_book_value: data.cost,
-      payment_method: data.payment_method ?? "cash",
-      description: data.description || null,
-      entity_id: entityId,
-    },
-  });
-
-  // 產生購置交易
   const assetAccountCode = ASSET_ACCOUNT[data.category] ?? "1501";
-  await createTransaction({
-    transaction_date: data.acquisition_date,
-    amount: data.cost,
-    description: `購置固定資產：${data.name}`,
-    source_type: "fixed_asset",
-    source_id: asset.id,
-    payment_method: data.payment_method ?? "cash",
-    has_payment: true,
-    has_receipt: true,
-    tax_treatment: "deductible",
-    expense_category_name: assetAccountCode, // 直接用科目代碼
+
+  const asset = await prisma.$transaction(async (tx) => {
+    const asset = await tx.fixedAsset.create({
+      data: {
+        name: data.name,
+        category: data.category,
+        acquisition_date: new Date(data.acquisition_date),
+        cost: data.cost,
+        residual_value: residual,
+        useful_life_months,
+        monthly_depreciation,
+        net_book_value: data.cost,
+        payment_method: data.payment_method ?? "cash",
+        description: data.description || null,
+        entity_id: entityId,
+      },
+    });
+
+    await createTransaction({
+      transaction_date: data.acquisition_date,
+      amount: data.cost,
+      description: `購置固定資產：${data.name}`,
+      source_type: "fixed_asset",
+      source_id: asset.id,
+      payment_method: data.payment_method ?? "cash",
+      has_payment: true,
+      has_receipt: true,
+      tax_treatment: "deductible",
+      expense_category_name: assetAccountCode,
+    }, tx);
+
+    return asset;
   });
 
   revalidatePath("/finance/fixed-assets");
@@ -138,8 +142,13 @@ export async function deleteFixedAsset(id: string) {
     );
   }
 
-  await prisma.fixedAsset.delete({ where: { id } });
+  await prisma.$transaction(async (tx) => {
+    await deleteLinkedTransaction("fixed_asset", id, tx);
+    await tx.fixedAsset.delete({ where: { id } });
+  });
+
   revalidatePath("/finance/fixed-assets");
+  revalidatePath("/finance");
 }
 
 export async function disposeFixedAsset(id: string) {
@@ -211,42 +220,43 @@ export async function generateMonthlyDepreciation() {
     const newNetBookValue = asset.cost - newAccumulated;
     const fullyDepreciated = newAccumulated >= asset.cost - asset.residual_value - 0.01;
 
-    // 建立折舊交易
+    // Atomic: Transaction + DepreciationRecord + FixedAsset update
     const accumAccount = ACCUM_DEPR_ACCOUNT[asset.category] ?? "1601";
-    const tx = await createTransaction({
-      transaction_date: new Date(year, month - 1, 1).toISOString(),
-      amount,
-      description: `${asset.name} ${year}/${month} 折舊`,
-      source_type: "depreciation",
-      source_id: asset.id,
-      payment_method: "non_cash",
-      credit_account_override: accumAccount,
-      has_payment: false,
-      has_receipt: false,
-      has_invoice: false,
-      tax_treatment: "deductible",
-      expense_category_name: "折舊費用",
-    });
 
-    // 建立折舊紀錄
-    await prisma.depreciationRecord.create({
-      data: {
-        asset_id: asset.id,
-        period_year: year,
-        period_month: month,
+    await prisma.$transaction(async (tx) => {
+      const transaction = await createTransaction({
+        transaction_date: new Date(year, month - 1, 1).toISOString(),
         amount,
-        transaction_id: tx.id,
-      },
-    });
+        description: `${asset.name} ${year}/${month} 折舊`,
+        source_type: "depreciation",
+        source_id: asset.id,
+        payment_method: "non_cash",
+        credit_account_override: accumAccount,
+        has_payment: false,
+        has_receipt: false,
+        has_invoice: false,
+        tax_treatment: "deductible",
+        expense_category_name: "折舊費用",
+      }, tx);
 
-    // 更新資產
-    await prisma.fixedAsset.update({
-      where: { id: asset.id },
-      data: {
-        accumulated_depreciation: newAccumulated,
-        net_book_value: newNetBookValue,
-        is_fully_depreciated: fullyDepreciated,
-      },
+      await tx.depreciationRecord.create({
+        data: {
+          asset_id: asset.id,
+          period_year: year,
+          period_month: month,
+          amount,
+          transaction_id: transaction.id,
+        },
+      });
+
+      await tx.fixedAsset.update({
+        where: { id: asset.id },
+        data: {
+          accumulated_depreciation: newAccumulated,
+          net_book_value: newNetBookValue,
+          is_fully_depreciated: fullyDepreciated,
+        },
+      });
     });
 
     results.push({ name: asset.name, created: true });
