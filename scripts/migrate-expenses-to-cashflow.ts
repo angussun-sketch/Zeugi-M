@@ -1,3 +1,7 @@
+// NOTE: This migration script has already been executed.
+// The old ExpenseCategory, ExpenseRecord, and RecurringExpense tables
+// have been dropped. This file is kept for historical reference only.
+
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";

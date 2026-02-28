@@ -19,7 +19,6 @@ model Organization {
   brands             Brand[]
   suppliers          Supplier[]
   ingredients        Ingredient[]
-  expense_categories ExpenseCategory[]
   accounts           Account[]
   fund_accounts        FundAccount[]
   cashflow_categories  CashflowCategory[]
@@ -41,8 +40,6 @@ model Entity {
   purchase_orders    PurchaseOrder[]
   transactions       Transaction[]
   journal_entries    JournalEntry[]
-  expense_records    ExpenseRecord[]
-  recurring_expenses RecurringExpense[]
   fixed_assets       FixedAsset[]
   employees          Employee[]
   batches            Batch[]
@@ -194,63 +191,6 @@ model BatchOutput {
   cost_per_piece      Float?
 
   @@index([batch_id])
-}
-
-// ============ 額外開銷 ============
-
-model ExpenseCategory {
-  id      String       @id @default(cuid())
-  org_id  String
-  org     Organization @relation(fields: [org_id], references: [id])
-  name    String
-  type    String       // "fixed" | "variable"
-
-  records             ExpenseRecord[]
-  recurring_expenses  RecurringExpense[]
-
-  @@unique([org_id, name])
-  @@index([org_id])
-}
-
-model ExpenseRecord {
-  id                   String            @id @default(cuid())
-  entity_id            String
-  entity               Entity            @relation(fields: [entity_id], references: [id])
-  category_id          String
-  category             ExpenseCategory   @relation(fields: [category_id], references: [id], onDelete: Cascade)
-  amount               Float
-  description          String?
-  expense_date         DateTime          // 實際支出日期
-  source               String            @default("manual") // "manual" | "recurring"
-  recurring_expense_id String?
-  recurring_expense    RecurringExpense?  @relation(fields: [recurring_expense_id], references: [id], onDelete: SetNull)
-  recorded_at          DateTime          @default(now())
-
-  @@index([entity_id])
-  @@index([category_id])
-  @@index([expense_date])
-  @@index([recurring_expense_id])
-}
-
-model RecurringExpense {
-  id             String          @id @default(cuid())
-  entity_id      String
-  entity         Entity          @relation(fields: [entity_id], references: [id])
-  name           String                            // "月房租"、"設備貸款"
-  category_id    String
-  category       ExpenseCategory @relation(fields: [category_id], references: [id])
-  amount         Float
-  due_day        Int                               // 每月幾號 (1-28)
-  description    String?
-  is_active      Boolean         @default(true)
-  last_generated DateTime?                         // 上次產生紀錄的月份
-  created_at     DateTime        @default(now())
-  updated_at     DateTime        @updatedAt
-
-  records        ExpenseRecord[]
-
-  @@index([entity_id])
-  @@index([category_id])
 }
 
 // ============ 現金流管理 ============
