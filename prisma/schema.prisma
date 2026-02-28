@@ -7,40 +7,152 @@ datasource db {
   provider = "postgresql"
 }
 
-// ============ 原料 & 採購 ============
+// ============ 多主體架構 ============
 
-model Ingredient {
-  id           String   @id @default(cuid())
-  name         String   @unique
-  measure_type String   // "weight" | "volume"
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+model Organization {
+  id         String   @id @default(cuid())
+  name       String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  purchase_records PurchaseRecord[]
-  batch_inputs     BatchInput[]
+  entities           Entity[]
+  brands             Brand[]
+  suppliers          Supplier[]
+  ingredients        Ingredient[]
+  expense_categories ExpenseCategory[]
+  accounts           Account[]
+  fund_accounts        FundAccount[]
+  cashflow_categories  CashflowCategory[]
 }
 
-model PurchaseRecord {
-  id                String     @id @default(cuid())
-  ingredient_id     String
-  ingredient        Ingredient @relation(fields: [ingredient_id], references: [id], onDelete: Cascade)
-  purchase_price    Float      // 採購總價
-  purchase_qty_base Float      // 換算後總量 (g 或 cc)
-  purchase_unit     String     // 使用者輸入單位 (g/kg/台斤/cc)
-  package_count     Int?       // 可選：幾包/罐
-  per_package_qty   Float?     // 每包/罐多少
-  per_package_unit  String?    // 每包/罐單位
-  unit_cost_base    Float      // 元/g 或 元/cc
-  is_current        Boolean    @default(true)
-  recorded_at       DateTime   @default(now())
+model Entity {
+  id          String       @id @default(cuid())
+  org_id      String
+  org         Organization @relation(fields: [org_id], references: [id])
+  tax_id      String                                    // 統編 8 碼
+  name        String                                    // "美味烘焙行"
+  entity_type String       @default("sole_proprietorship") // "sole_proprietorship" | "limited_company" | "corporation"
+  brand_id    String?
+  brand       Brand?       @relation(fields: [brand_id], references: [id])
+  is_active   Boolean      @default(true)
+  created_at  DateTime     @default(now())
+  updated_at  DateTime     @updatedAt
 
-  @@index([ingredient_id, is_current])
+  purchase_orders    PurchaseOrder[]
+  transactions       Transaction[]
+  journal_entries    JournalEntry[]
+  expense_records    ExpenseRecord[]
+  recurring_expenses RecurringExpense[]
+  fixed_assets       FixedAsset[]
+  employees          Employee[]
+  batches            Batch[]
+  cashflow_records     CashflowRecord[]
+  recurring_cashflows  RecurringCashflow[]
+
+  @@unique([org_id, tax_id])
+  @@index([org_id])
+}
+
+model Brand {
+  id         String       @id @default(cuid())
+  org_id     String
+  org        Organization @relation(fields: [org_id], references: [id])
+  name       String
+  created_at DateTime     @default(now())
+
+  entities Entity[]
+
+  @@unique([org_id, name])
+  @@index([org_id])
+}
+
+// ============ 供應商 & 叫貨單 ============
+
+model Supplier {
+  id         String       @id @default(cuid())
+  org_id     String
+  org        Organization @relation(fields: [org_id], references: [id])
+  name       String
+  category   String       @default("原料")
+  contact    String?
+  phone      String?
+  notes      String?
+  created_at DateTime     @default(now())
+  updated_at DateTime     @updatedAt
+
+  purchase_orders PurchaseOrder[]
+
+  @@unique([org_id, name])
+  @@index([org_id])
+}
+
+model PurchaseOrder {
+  id           String    @id @default(cuid())
+  entity_id    String
+  entity       Entity    @relation(fields: [entity_id], references: [id])
+  order_number String    @unique
+  order_date   DateTime  @default(now())
+  supplier_id  String?
+  supplier     Supplier? @relation(fields: [supplier_id], references: [id])
+  notes        String?
+  total_amount Float?
+  created_at   DateTime  @default(now())
+
+  items PurchaseOrderItem[]
+
+  @@index([order_date])
+  @@index([entity_id])
+}
+
+model PurchaseOrderItem {
+  id               String        @id @default(cuid())
+  order_id         String
+  order            PurchaseOrder @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  ingredient_id    String
+  ingredient       Ingredient    @relation(fields: [ingredient_id], references: [id])
+
+  purchase_qty     Float
+  purchase_unit    String
+  per_package_qty  Float?
+  per_package_unit String?
+  total_qty_base   Float
+  subtotal         Float
+  unit_cost_base   Float
+
+  @@index([order_id])
+  @@index([ingredient_id])
+}
+
+// ============ 原料 ============
+
+model Ingredient {
+  id               String       @id @default(cuid())
+  org_id           String
+  org              Organization @relation(fields: [org_id], references: [id])
+  name             String
+  measure_type     String       // "weight" | "volume"
+  unit_cost_base   Float?   // 元/g 或 元/cc
+  purchase_qty     Float?   // 採購數量
+  purchase_unit    String?  // 採購單位
+  per_package_qty  Float?   // 每包裝量
+  per_package_unit String?  // 包裝單位
+  subtotal         Float?   // 總價
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  purchase_order_items  PurchaseOrderItem[]
+  batch_inputs          BatchInput[]
+
+  @@unique([org_id, name])
+  @@index([org_id])
 }
 
 // ============ 批次 & 分攤 ============
 
 model Batch {
   id           String   @id @default(cuid())
+  entity_id    String
+  entity       Entity   @relation(fields: [entity_id], references: [id])
   name         String
   alloc_method String   // "by_pieces" | "by_filling_weight"
   total_cost   Float?
@@ -49,6 +161,8 @@ model Batch {
 
   inputs  BatchInput[]
   outputs BatchOutput[]
+
+  @@index([entity_id])
 }
 
 model BatchInput {
@@ -75,6 +189,7 @@ model BatchOutput {
   flavor_name         String
   pieces              Int
   filling_g_per_piece Float?
+  skin_g_per_piece    Float?
   total_cost          Float?
   cost_per_piece      Float?
 
@@ -84,29 +199,330 @@ model BatchOutput {
 // ============ 額外開銷 ============
 
 model ExpenseCategory {
-  id      String          @id @default(cuid())
-  name    String          @unique
-  type    String          // "fixed" | "variable" | "recurring"
-  records ExpenseRecord[]
+  id      String       @id @default(cuid())
+  org_id  String
+  org     Organization @relation(fields: [org_id], references: [id])
+  name    String
+  type    String       // "fixed" | "variable"
+
+  records             ExpenseRecord[]
+  recurring_expenses  RecurringExpense[]
+
+  @@unique([org_id, name])
+  @@index([org_id])
 }
 
 model ExpenseRecord {
-  id           String          @id @default(cuid())
-  category_id  String
-  category     ExpenseCategory @relation(fields: [category_id], references: [id], onDelete: Cascade)
-  amount       Float
-  description  String?
-  period_start DateTime?
-  period_end   DateTime?
-  recorded_at  DateTime        @default(now())
+  id                   String            @id @default(cuid())
+  entity_id            String
+  entity               Entity            @relation(fields: [entity_id], references: [id])
+  category_id          String
+  category             ExpenseCategory   @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  amount               Float
+  description          String?
+  expense_date         DateTime          // 實際支出日期
+  source               String            @default("manual") // "manual" | "recurring"
+  recurring_expense_id String?
+  recurring_expense    RecurringExpense?  @relation(fields: [recurring_expense_id], references: [id], onDelete: SetNull)
+  recorded_at          DateTime          @default(now())
 
+  @@index([entity_id])
   @@index([category_id])
+  @@index([expense_date])
+  @@index([recurring_expense_id])
+}
+
+model RecurringExpense {
+  id             String          @id @default(cuid())
+  entity_id      String
+  entity         Entity          @relation(fields: [entity_id], references: [id])
+  name           String                            // "月房租"、"設備貸款"
+  category_id    String
+  category       ExpenseCategory @relation(fields: [category_id], references: [id])
+  amount         Float
+  due_day        Int                               // 每月幾號 (1-28)
+  description    String?
+  is_active      Boolean         @default(true)
+  last_generated DateTime?                         // 上次產生紀錄的月份
+  created_at     DateTime        @default(now())
+  updated_at     DateTime        @updatedAt
+
+  records        ExpenseRecord[]
+
+  @@index([entity_id])
+  @@index([category_id])
+}
+
+// ============ 現金流管理 ============
+
+model FundAccount {
+  id           String   @id @default(cuid())
+  org_id       String
+  org          Organization @relation(fields: [org_id], references: [id])
+  name         String
+  account_type String   @default("cash") // "cash" | "bank" | "credit_card" | "other"
+  is_active    Boolean  @default(true)
+  sort_order   Int      @default(0)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  cashflow_records    CashflowRecord[]
+  recurring_cashflows RecurringCashflow[]
+
+  @@unique([org_id, name])
+  @@index([org_id])
+}
+
+model CashflowCategory {
+  id           String   @id @default(cuid())
+  org_id       String
+  org          Organization @relation(fields: [org_id], references: [id])
+  direction    String   // "income" | "expense"
+  group_name   String   // "成本·進貨" | "營業收入" etc.
+  name         String   // "原料費" | "門市營收" etc.
+  account_code String   // "5131" | "4111" etc.
+  sort_order   Int      @default(0)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  cashflow_records    CashflowRecord[]
+  recurring_cashflows RecurringCashflow[]
+
+  @@unique([org_id, direction, group_name, name])
+  @@index([org_id])
+  @@index([direction])
+}
+
+model CashflowRecord {
+  id                    String    @id @default(cuid())
+  entity_id             String
+  entity                Entity    @relation(fields: [entity_id], references: [id])
+  direction             String    // "income" | "expense"
+  category_id           String
+  category              CashflowCategory @relation(fields: [category_id], references: [id])
+  fund_account_id       String?
+  fund_account          FundAccount?     @relation(fields: [fund_account_id], references: [id])
+  amount                Float
+  record_date           DateTime
+  description           String?
+  source                String    @default("manual") // "manual" | "recurring"
+  recurring_cashflow_id String?
+  recurring_cashflow    RecurringCashflow? @relation(fields: [recurring_cashflow_id], references: [id], onDelete: SetNull)
+  recorded_at           DateTime  @default(now())
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+
+  @@index([entity_id])
+  @@index([category_id])
+  @@index([fund_account_id])
+  @@index([record_date])
+  @@index([direction])
+  @@index([recurring_cashflow_id])
+}
+
+model RecurringCashflow {
+  id              String    @id @default(cuid())
+  entity_id       String
+  entity          Entity    @relation(fields: [entity_id], references: [id])
+  direction       String    // "income" | "expense"
+  name            String
+  category_id     String
+  category        CashflowCategory @relation(fields: [category_id], references: [id])
+  fund_account_id String?
+  fund_account    FundAccount?     @relation(fields: [fund_account_id], references: [id])
+  amount          Float
+  due_day         Int                // 每月幾號 (1-28)
+  description     String?
+  is_active       Boolean   @default(true)
+  last_generated  DateTime?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  records         CashflowRecord[]
+
+  @@index([entity_id])
+  @@index([category_id])
+}
+
+// ============ 固定資產 ============
+
+model FixedAsset {
+  id                       String    @id @default(cuid())
+  entity_id                String
+  entity                   Entity    @relation(fields: [entity_id], references: [id])
+  name                     String                // "商用烤箱"
+  category                 String                // "equipment" | "vehicle" | "building" | "other"
+  acquisition_date         DateTime              // 取得日期
+  cost                     Float                 // 取得成本
+  residual_value           Float     @default(0) // 殘值
+  useful_life_months       Int                   // 耐用月數（5年=60）
+  depreciation_method      String    @default("straight_line")
+  monthly_depreciation     Float                 // 每月折舊額
+  accumulated_depreciation Float     @default(0) // 已提折舊總額
+  net_book_value           Float                 // 帳面淨值
+  is_active                Boolean   @default(true)
+  is_fully_depreciated     Boolean   @default(false)
+  description              String?
+  payment_method           String    @default("cash") // 購置時付款方式
+  created_at               DateTime  @default(now())
+  updated_at               DateTime  @updatedAt
+
+  depreciation_records DepreciationRecord[]
+
+  @@index([entity_id])
+  @@index([is_active])
+}
+
+model DepreciationRecord {
+  id              String     @id @default(cuid())
+  asset_id        String
+  asset           FixedAsset @relation(fields: [asset_id], references: [id], onDelete: Cascade)
+  period_year     Int
+  period_month    Int
+  amount          Float
+  transaction_id  String?
+  created_at      DateTime   @default(now())
+
+  @@unique([asset_id, period_year, period_month])
+  @@index([asset_id])
+}
+
+// ============ 會計財務 ============
+
+model Account {
+  id         String        @id @default(cuid())
+  org_id     String
+  org        Organization @relation(fields: [org_id], references: [id])
+  code       String                // "1101", "5204"
+  name       String                // "現金", "油料費"
+  type       String                // "asset" | "liability" | "equity" | "revenue" | "expense"
+  parent_id  String?
+  parent     Account?  @relation("AccountTree", fields: [parent_id], references: [id])
+  children   Account[] @relation("AccountTree")
+  is_active  Boolean   @default(true)
+  created_at DateTime  @default(now())
+
+  journal_lines JournalLine[]
+
+  @@unique([org_id, code])
+  @@index([org_id])
+}
+
+model Transaction {
+  id                 String    @id @default(cuid())
+  entity_id          String
+  entity             Entity    @relation(fields: [entity_id], references: [id])
+  transaction_date   DateTime
+  amount             Float                        // 含稅總額
+  description        String
+
+  // 來源追溯
+  source_type        String                       // "purchase_order" | "expense" | "salary" | "manual"
+  source_id          String?
+
+  // 對象
+  counterparty       String?                      // 供應商/員工/對象名稱
+  supplier_id        String?
+
+  // 付款
+  payment_method     String                       // "cash" | "bank" | "credit_card" | "owner_advance"
+
+  // 三方匹配
+  has_payment        Boolean   @default(false)
+  has_receipt        Boolean   @default(false)
+  has_invoice        Boolean   @default(false)
+  match_status       String    @default("unmatched") // "fully_matched" | "partial" | "unmatched"
+
+  // 業務判斷
+  business_use       Boolean   @default(true)
+
+  // 稅務處理
+  tax_treatment      String    @default("deductible") // "deductible" | "nondeductible" | "exclude_by_policy" | "owner_draw"
+  tax_mode           String    @default("mode1")      // "mode1" | "mode2"
+  reason_code        String?
+
+  // 發票
+  invoice_type       String?                      // "二聯式" | "三聯式" | "收據" | "無"
+  invoice_number     String?
+  tax_rate           Float?
+  tax_amount         Float?
+  net_amount         Float?
+
+  // 佐證
+  proof_type         String?                      // "invoice" | "transfer" | "line_chat" | "photo" | "internal_form"
+  proof_note         String?
+
+  // 狀態
+  status             String    @default("draft")  // "draft" | "posted" | "voided"
+
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  journal_entries        JournalEntry[]
+  reconciliation_items   ReconciliationItem[]
+
+  @@index([transaction_date])
+  @@index([source_type, source_id])
+  @@index([match_status])
+  @@index([entity_id])
+  @@index([status])
+}
+
+model JournalEntry {
+  id              String      @id @default(cuid())
+  entity_id       String
+  entity          Entity      @relation(fields: [entity_id], references: [id])
+  transaction_id  String
+  transaction     Transaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  book_type       String      // "internal" | "tax"
+  entry_date      DateTime
+  description     String?
+  is_posted       Boolean     @default(false)
+  created_at      DateTime    @default(now())
+
+  lines JournalLine[]
+
+  @@index([entity_id])
+  @@index([transaction_id])
+  @@index([book_type, entry_date])
+}
+
+model JournalLine {
+  id          String       @id @default(cuid())
+  entry_id    String
+  entry       JournalEntry @relation(fields: [entry_id], references: [id], onDelete: Cascade)
+  account_id  String
+  account     Account      @relation(fields: [account_id], references: [id])
+  debit       Float        @default(0)
+  credit      Float        @default(0)
+  description String?
+
+  @@index([entry_id])
+  @@index([account_id])
+}
+
+model ReconciliationItem {
+  id              String      @id @default(cuid())
+  transaction_id  String
+  transaction     Transaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  period_year     Int
+  period_month    Int
+  internal_amount Float
+  tax_amount      Float
+  difference      Float
+  reason_code     String
+  description     String?
+
+  @@index([transaction_id])
+  @@index([period_year, period_month])
 }
 
 // ============ 人事管理 ============
 
 model Employee {
   id            String    @id @default(cuid())
+  entity_id     String
+  entity        Entity    @relation(fields: [entity_id], references: [id])
   name          String
   role          String?
   salary_type   String    // "monthly" | "hourly" | "daily"
@@ -120,6 +536,8 @@ model Employee {
 
   attendances    Attendance[]
   salary_records SalaryRecord[]
+
+  @@index([entity_id])
 }
 
 model Attendance {
