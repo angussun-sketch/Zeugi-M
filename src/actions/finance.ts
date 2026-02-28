@@ -625,5 +625,4 @@ export async function deleteLinkedTransaction(
   return existing?.id ?? null;
 }
 
-export type { TxClient };
 
