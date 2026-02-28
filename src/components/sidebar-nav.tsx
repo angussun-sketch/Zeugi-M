@@ -7,8 +7,12 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/", label: "儀表板" },
   { href: "/ingredients", label: "原料管理" },
-  { href: "/batches", label: "批次管理" },
-  { href: "/expenses", label: "開銷記錄" },
+  { href: "/purchase-orders", label: "叫貨單" },
+  { href: "/suppliers", label: "供應商" },
+  { href: "/companies", label: "公司管理" },
+  { href: "/batches", label: "產品菜單" },
+  { href: "/cashflow", label: "收支管理" },
+  { href: "/finance", label: "財務管理" },
   { href: "/employees", label: "人事管理" },
   { href: "/trends", label: "趨勢分析" },
 ];
