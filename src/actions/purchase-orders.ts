@@ -161,6 +161,16 @@ export async function createPurchaseOrder(data: {
   const orderDate = data.order_date ? new Date(data.order_date) : new Date();
 
   const { orgId, entityId: defaultEntityId } = await getCurrentEntity();
+
+  // Validate all ingredient_ids belong to current org
+  const ingredientIds = [...new Set(data.items.map((i) => i.ingredient_id))];
+  const validIngredients = await prisma.ingredient.findMany({
+    where: { id: { in: ingredientIds }, org_id: orgId },
+    select: { id: true },
+  });
+  if (validIngredients.length !== ingredientIds.length) {
+    throw new Error("部分食材不屬於目前組織");
+  }
   const entityId = data.entity_id ?? defaultEntityId;
 
   // Pre-fetch cashflow category & fund account (read-only, safe outside tx)
@@ -333,6 +343,7 @@ export async function getSupplierNames() {
 }
 
 export async function getPurchaseOrder(id: string) {
+  await assertEntityOwns("purchaseOrder", id);
   return prisma.purchaseOrder.findUnique({
     where: { id },
     include: {
@@ -354,6 +365,18 @@ export async function updatePurchaseOrder(
   },
 ) {
   await assertEntityOwns("purchaseOrder", id);
+
+  // Validate all ingredient_ids belong to current org
+  const { orgId } = await getCurrentEntity();
+  const ingredientIds = [...new Set(data.items.map((i) => i.ingredient_id))];
+  const validIngredients = await prisma.ingredient.findMany({
+    where: { id: { in: ingredientIds }, org_id: orgId },
+    select: { id: true },
+  });
+  if (validIngredients.length !== ingredientIds.length) {
+    throw new Error("部分食材不屬於目前組織");
+  }
+
   let supplier_id: string | null = null;
   if (data.supplier_name?.trim()) {
     const supplier = await findOrCreateSupplier(data.supplier_name);

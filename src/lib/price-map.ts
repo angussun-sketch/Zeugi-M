@@ -13,12 +13,18 @@ export interface PriceInfo {
 /**
  * 取得各原料的最新價格資訊
  * 以叫貨單日期 (order_date) 判定，最新日期的為目前成本
+ * @param orgId  傳入時只查該 org 的叫貨單，防止跨組織價格洩漏
  */
 export async function getLatestPriceMap(
   ingredientIds?: string[],
+  orgId?: string,
 ): Promise<Map<string, PriceInfo>> {
+  const where: Record<string, unknown> = {};
+  if (ingredientIds) where.ingredient_id = { in: ingredientIds };
+  if (orgId) where.order = { entity: { org_id: orgId } };
+
   const items = await prisma.purchaseOrderItem.findMany({
-    where: ingredientIds ? { ingredient_id: { in: ingredientIds } } : undefined,
+    where,
     include: { order: { select: { order_date: true } } },
     orderBy: [
       { order: { order_date: "desc" } },

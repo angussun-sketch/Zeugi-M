@@ -6,8 +6,8 @@ const COOKIE_ENTITY = "zeugi_entity_id";
 
 /**
  * @pre  必須在 Server Action 或 Route Handler 內呼叫（需要 cookie context）
- * @post 回傳 { orgId, entityId }，若 cookie 為空則自動設定第一個啟用 Entity
- * @fails 若 DB 完全無 Entity，拋 findFirstOrThrow 例外
+ * @post 回傳 { orgId, entityId }；單一 entity 時自動設定 cookie
+ * @fails 若 DB 無 Entity → findFirstOrThrow 例外；若 >1 active entity 且無 cookie → "請先選擇營業主體"
  * @invariant 同一 request 內多次呼叫回傳相同值（cookie 在 request 內不變）
  * @see docs/adr/001-multi-entity-architecture.md
  */
@@ -17,15 +17,23 @@ export async function getCurrentEntity() {
   let entityId = cookieStore.get(COOKIE_ENTITY)?.value ?? null;
 
   if (!orgId || !entityId) {
-    // 優先取啟用中的 Entity，若無則取任意 Entity
-    const entity =
-      (await prisma.entity.findFirst({
-        where: { is_active: true },
-        orderBy: { created_at: "asc" },
-      })) ??
-      (await prisma.entity.findFirstOrThrow());
-    orgId = entity.org_id;
-    entityId = entity.id;
+    const activeEntities = await prisma.entity.findMany({
+      where: { is_active: true },
+      orderBy: { created_at: "asc" },
+      take: 2,
+    });
+
+    if (activeEntities.length === 0) {
+      const entity = await prisma.entity.findFirstOrThrow();
+      orgId = entity.org_id;
+      entityId = entity.id;
+    } else if (activeEntities.length === 1) {
+      orgId = activeEntities[0].org_id;
+      entityId = activeEntities[0].id;
+    } else {
+      throw new Error("請先選擇營業主體");
+    }
+
     cookieStore.set(COOKIE_ORG, orgId, { httpOnly: true, sameSite: "lax" });
     cookieStore.set(COOKIE_ENTITY, entityId, {
       httpOnly: true,

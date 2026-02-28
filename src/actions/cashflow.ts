@@ -254,21 +254,24 @@ export async function createCashflowRecord(data: {
   description?: string;
   entity_id?: string;
 }) {
-  const entityId = data.entity_id ?? (await getCurrentEntity()).entityId;
+  const { orgId, entityId: defaultEntityId } = await getCurrentEntity();
+  const entityId = data.entity_id ?? defaultEntityId;
 
-  // Pre-fetch outside transaction (read-only, safe)
+  // Pre-fetch + validate org ownership outside transaction
   const category = await prisma.cashflowCategory.findUnique({
     where: { id: data.category_id },
   });
+  if (!category) throw new Error("收支分類不存在");
+  if (category.org_id !== orgId) throw new Error("無權限操作此收支分類");
 
   let paymentMethod = "cash";
   if (data.fund_account_id) {
     const fundAccount = await prisma.fundAccount.findUnique({
       where: { id: data.fund_account_id },
     });
-    if (fundAccount) {
-      paymentMethod = fundAccountToPaymentMethod(fundAccount.account_type);
-    }
+    if (!fundAccount) throw new Error("資金帳戶不存在");
+    if (fundAccount.org_id !== orgId) throw new Error("無權限操作此資金帳戶");
+    paymentMethod = fundAccountToPaymentMethod(fundAccount.account_type);
   }
 
   const sourceType =
@@ -421,6 +424,11 @@ export async function createRecurringCashflow(data: {
 }) {
   if (data.due_day < 1 || data.due_day > 28) {
     throw new Error("出款日必須在 1-28 之間");
+  }
+
+  await assertOrgOwns("cashflowCategory", data.category_id);
+  if (data.fund_account_id) {
+    await assertOrgOwns("fundAccount", data.fund_account_id);
   }
 
   const { entityId } = await getCurrentEntity();

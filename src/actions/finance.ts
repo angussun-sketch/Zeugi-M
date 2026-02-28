@@ -101,6 +101,7 @@ export async function getTransactions(filters?: {
 }
 
 export async function getTransactionById(id: string) {
+  await assertEntityOwns("transaction", id);
   return prisma.transaction.findUnique({
     where: { id },
     include: {

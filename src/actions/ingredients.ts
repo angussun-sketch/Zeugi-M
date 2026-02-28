@@ -17,6 +17,7 @@ export async function getIngredients() {
 }
 
 export async function getIngredient(id: string) {
+  await assertOrgOwns("ingredient", id);
   return prisma.ingredient.findUnique({
     where: { id },
     include: {

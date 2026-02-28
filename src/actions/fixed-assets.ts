@@ -20,6 +20,7 @@ export async function getFixedAssets() {
 }
 
 export async function getFixedAssetById(id: string) {
+  await assertEntityOwns("fixedAsset", id);
   return prisma.fixedAsset.findUnique({
     where: { id },
     include: {
