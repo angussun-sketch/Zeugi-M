@@ -251,6 +251,8 @@ model CashflowRecord {
   recorded_at           DateTime  @default(now())
   created_at            DateTime  @default(now())
   updated_at            DateTime  @updatedAt
+  transaction_id        String?   @unique
+  transaction           Transaction? @relation(fields: [transaction_id], references: [id], onDelete: SetNull)
 
   @@index([entity_id])
   @@index([category_id])
@@ -400,6 +402,7 @@ model Transaction {
 
   journal_entries        JournalEntry[]
   reconciliation_items   ReconciliationItem[]
+  cashflow_record        CashflowRecord?
 
   @@index([transaction_date])
   @@index([source_type, source_id])
