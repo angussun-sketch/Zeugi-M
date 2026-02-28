@@ -35,6 +35,16 @@ import {
   createCashflowRecord,
   updateCashflowRecord,
   deleteCashflowRecord,
+  createCashflowCategory,
+  deleteCashflowCategory,
+  createFundAccount,
+  updateFundAccount,
+  deleteFundAccount,
+  getFundAccounts,
+  getRecurringCashflows,
+  createRecurringCashflow,
+  updateRecurringCashflow,
+  deleteRecurringCashflow,
 } from "@/actions/cashflow";
 import { EntityCombobox } from "@/components/entity-combobox";
 
@@ -75,6 +85,30 @@ type EntityOption = {
   id: string;
   name: string;
   tax_id: string;
+};
+
+type RecurringCashflowItem = {
+  id: string;
+  direction: string;
+  name: string;
+  category_id: string;
+  category: { id: string; direction: string; group_name: string; name: string };
+  fund_account_id: string | null;
+  fund_account: { id: string; name: string } | null;
+  amount: number;
+  due_day: number;
+  description: string | null;
+  is_active: boolean;
+  last_generated: Date | null;
+  _count: { records: number };
+};
+
+type FundAccountFull = {
+  id: string;
+  name: string;
+  account_type: string;
+  is_active: boolean;
+  _count?: { cashflow_records: number };
 };
 
 interface Filters {
@@ -159,6 +193,38 @@ export function CashflowClient({
   const [editAmount, setEditAmount] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+
+  // Settings dialog state
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"categories" | "accounts" | "recurring">("categories");
+
+  // Settings: Category form
+  const [newCatDirection, setNewCatDirection] = useState<string>("expense");
+  const [newCatGroupName, setNewCatGroupName] = useState("");
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatAccountCode, setNewCatAccountCode] = useState("");
+  const [catSaving, setCatSaving] = useState(false);
+
+  // Settings: Fund accounts
+  const [allFundAccounts, setAllFundAccounts] = useState<FundAccountFull[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [newAccountName, setNewAccountName] = useState("");
+  const [newAccountType, setNewAccountType] = useState("bank");
+  const [accountSaving, setAccountSaving] = useState(false);
+
+  // Settings: Recurring cashflow
+  const [recurringItems, setRecurringItems] = useState<RecurringCashflowItem[]>([]);
+  const [recurringLoading, setRecurringLoading] = useState(false);
+  const [recurringFormOpen, setRecurringFormOpen] = useState(false);
+  const [editingRecurring, setEditingRecurring] = useState<RecurringCashflowItem | null>(null);
+  const [rcDirection, setRcDirection] = useState<string>("expense");
+  const [rcName, setRcName] = useState("");
+  const [rcCategoryId, setRcCategoryId] = useState("");
+  const [rcFundAccountId, setRcFundAccountId] = useState("");
+  const [rcAmount, setRcAmount] = useState("");
+  const [rcDueDay, setRcDueDay] = useState("1");
+  const [rcDescription, setRcDescription] = useState("");
+  const [rcSaving, setRcSaving] = useState(false);
 
   // Derived data
   const tabCategories = categories.filter((c) => c.direction === activeTab);
@@ -293,6 +359,212 @@ export function CashflowClient({
     }
   }
 
+  // ==================== Settings: Load data ====================
+
+  async function loadFundAccounts() {
+    setAccountsLoading(true);
+    try {
+      const accounts = await getFundAccounts();
+      setAllFundAccounts(accounts as FundAccountFull[]);
+    } catch {
+      // silently fail
+    } finally {
+      setAccountsLoading(false);
+    }
+  }
+
+  async function loadRecurring() {
+    setRecurringLoading(true);
+    try {
+      const items = await getRecurringCashflows();
+      setRecurringItems(items as RecurringCashflowItem[]);
+    } catch {
+      // silently fail
+    } finally {
+      setRecurringLoading(false);
+    }
+  }
+
+  function handleSettingsTabChange(tab: "categories" | "accounts" | "recurring") {
+    setSettingsTab(tab);
+    if (tab === "accounts") loadFundAccounts();
+    if (tab === "recurring") loadRecurring();
+  }
+
+  function openSettings() {
+    setSettingsOpen(true);
+    setSettingsTab("categories");
+  }
+
+  // ==================== Settings: Categories ====================
+
+  async function handleCreateCategory() {
+    if (!newCatDirection || !newCatGroupName.trim() || !newCatName.trim() || !newCatAccountCode.trim()) {
+      alert("請填寫所有欄位");
+      return;
+    }
+    setCatSaving(true);
+    try {
+      await createCashflowCategory({
+        direction: newCatDirection,
+        group_name: newCatGroupName.trim(),
+        name: newCatName.trim(),
+        account_code: newCatAccountCode.trim(),
+      });
+      setNewCatGroupName("");
+      setNewCatName("");
+      setNewCatAccountCode("");
+      router.refresh();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "新增失敗");
+    } finally {
+      setCatSaving(false);
+    }
+  }
+
+  async function handleDeleteCategory(id: string) {
+    if (!confirm("確定要刪除此分類？")) return;
+    try {
+      await deleteCashflowCategory(id);
+      router.refresh();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "刪除失敗");
+    }
+  }
+
+  // ==================== Settings: Fund Accounts ====================
+
+  async function handleCreateAccount() {
+    if (!newAccountName.trim()) {
+      alert("請填寫帳戶名稱");
+      return;
+    }
+    setAccountSaving(true);
+    try {
+      await createFundAccount({
+        name: newAccountName.trim(),
+        account_type: newAccountType,
+      });
+      setNewAccountName("");
+      router.refresh();
+      loadFundAccounts();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "新增失敗");
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function handleToggleAccount(account: FundAccountFull) {
+    try {
+      await updateFundAccount(account.id, { is_active: !account.is_active });
+      router.refresh();
+      loadFundAccounts();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "操作失敗");
+    }
+  }
+
+  async function handleDeleteAccount(id: string) {
+    if (!confirm("確定要刪除此帳戶？")) return;
+    try {
+      await deleteFundAccount(id);
+      router.refresh();
+      loadFundAccounts();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "刪除失敗");
+    }
+  }
+
+  // ==================== Settings: Recurring ====================
+
+  const rcCategories = categories.filter((c) => c.direction === rcDirection);
+  const groupedRcCategories = groupCategories(rcCategories);
+
+  function openRecurringForm(item?: RecurringCashflowItem) {
+    if (item) {
+      setEditingRecurring(item);
+      setRcDirection(item.direction);
+      setRcName(item.name);
+      setRcCategoryId(item.category_id);
+      setRcFundAccountId(item.fund_account_id ?? "");
+      setRcAmount(item.amount.toString());
+      setRcDueDay(item.due_day.toString());
+      setRcDescription(item.description ?? "");
+    } else {
+      setEditingRecurring(null);
+      setRcDirection("expense");
+      setRcName("");
+      setRcCategoryId("");
+      setRcFundAccountId("");
+      setRcAmount("");
+      setRcDueDay("1");
+      setRcDescription("");
+    }
+    setRecurringFormOpen(true);
+  }
+
+  async function handleSaveRecurring() {
+    const amount = parseFloat(rcAmount);
+    const dueDay = parseInt(rcDueDay);
+    if (!rcName.trim() || !rcCategoryId || isNaN(amount) || amount <= 0 || isNaN(dueDay) || dueDay < 1 || dueDay > 28) {
+      alert("請填寫完整，金額必須為正數，日期 1-28");
+      return;
+    }
+
+    setRcSaving(true);
+    try {
+      if (editingRecurring) {
+        await updateRecurringCashflow(editingRecurring.id, {
+          name: rcName.trim(),
+          category_id: rcCategoryId,
+          fund_account_id: rcFundAccountId || undefined,
+          amount,
+          due_day: dueDay,
+          description: rcDescription.trim() || undefined,
+        });
+      } else {
+        await createRecurringCashflow({
+          direction: rcDirection as "income" | "expense",
+          name: rcName.trim(),
+          category_id: rcCategoryId,
+          fund_account_id: rcFundAccountId || undefined,
+          amount,
+          due_day: dueDay,
+          description: rcDescription.trim() || undefined,
+        });
+      }
+      setRecurringFormOpen(false);
+      router.refresh();
+      loadRecurring();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "儲存失敗");
+    } finally {
+      setRcSaving(false);
+    }
+  }
+
+  async function handleToggleRecurring(item: RecurringCashflowItem) {
+    try {
+      await updateRecurringCashflow(item.id, { is_active: !item.is_active });
+      router.refresh();
+      loadRecurring();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "操作失敗");
+    }
+  }
+
+  async function handleDeleteRecurring(id: string) {
+    if (!confirm("確定要刪除此定期收支？")) return;
+    try {
+      await deleteRecurringCashflow(id);
+      router.refresh();
+      loadRecurring();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "刪除失敗");
+    }
+  }
+
   // ==================== Edit dialog categories ====================
 
   const editCategories = editingRecord
@@ -307,7 +579,7 @@ export function CashflowClient({
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">收支管理</h2>
-        <Button variant="outline" onClick={() => {}}>
+        <Button variant="outline" onClick={openSettings}>
           設定
         </Button>
       </div>
@@ -748,6 +1020,489 @@ export function CashflowClient({
             </Button>
             <Button onClick={handleEditSave} disabled={editSaving}>
               {editSaving ? "儲存中..." : "儲存"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Settings Dialog */}
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>收支管理設定</DialogTitle>
+          </DialogHeader>
+
+          {/* Settings Tab Buttons */}
+          <div className="flex gap-2 border-b pb-3">
+            <Button
+              variant={settingsTab === "categories" ? "default" : "outline"}
+              size="sm"
+              onClick={() => handleSettingsTabChange("categories")}
+            >
+              分類管理
+            </Button>
+            <Button
+              variant={settingsTab === "accounts" ? "default" : "outline"}
+              size="sm"
+              onClick={() => handleSettingsTabChange("accounts")}
+            >
+              資金帳戶
+            </Button>
+            <Button
+              variant={settingsTab === "recurring" ? "default" : "outline"}
+              size="sm"
+              onClick={() => handleSettingsTabChange("recurring")}
+            >
+              定期收支
+            </Button>
+          </div>
+
+          {/* ===== Tab: 分類管理 ===== */}
+          {settingsTab === "categories" && (
+            <div className="space-y-6">
+              {/* 收入分類 */}
+              <div>
+                <h3 className="text-lg font-semibold mb-3">收入分類</h3>
+                {(() => {
+                  const incomeCats = categories.filter((c) => c.direction === "income");
+                  const grouped = groupCategories(incomeCats);
+                  if (Object.keys(grouped).length === 0) {
+                    return <p className="text-sm text-muted-foreground">尚無收入分類</p>;
+                  }
+                  return Object.entries(grouped).map(([groupName, cats]) => (
+                    <div key={groupName} className="mb-3">
+                      <h4 className="text-sm font-medium text-muted-foreground mb-1">{groupName}</h4>
+                      <div className="space-y-1">
+                        {cats.map((cat) => {
+                          const totalCount = cat._count.cashflow_records + cat._count.recurring_cashflows;
+                          return (
+                            <div key={cat.id} className="flex items-center justify-between py-1 px-3 bg-muted/50 rounded">
+                              <div className="flex items-center gap-3">
+                                <span className="font-medium">{cat.name}</span>
+                                <span className="text-xs text-muted-foreground">{cat.account_code}</span>
+                                {totalCount > 0 && (
+                                  <span className="text-xs text-muted-foreground">（{totalCount} 筆使用中）</span>
+                                )}
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive"
+                                disabled={totalCount > 0}
+                                onClick={() => handleDeleteCategory(cat.id)}
+                              >
+                                刪除
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
+
+              {/* 支出分類 */}
+              <div>
+                <h3 className="text-lg font-semibold mb-3">支出分類</h3>
+                {(() => {
+                  const expenseCats = categories.filter((c) => c.direction === "expense");
+                  const grouped = groupCategories(expenseCats);
+                  if (Object.keys(grouped).length === 0) {
+                    return <p className="text-sm text-muted-foreground">尚無支出分類</p>;
+                  }
+                  return Object.entries(grouped).map(([groupName, cats]) => (
+                    <div key={groupName} className="mb-3">
+                      <h4 className="text-sm font-medium text-muted-foreground mb-1">{groupName}</h4>
+                      <div className="space-y-1">
+                        {cats.map((cat) => {
+                          const totalCount = cat._count.cashflow_records + cat._count.recurring_cashflows;
+                          return (
+                            <div key={cat.id} className="flex items-center justify-between py-1 px-3 bg-muted/50 rounded">
+                              <div className="flex items-center gap-3">
+                                <span className="font-medium">{cat.name}</span>
+                                <span className="text-xs text-muted-foreground">{cat.account_code}</span>
+                                {totalCount > 0 && (
+                                  <span className="text-xs text-muted-foreground">（{totalCount} 筆使用中）</span>
+                                )}
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive"
+                                disabled={totalCount > 0}
+                                onClick={() => handleDeleteCategory(cat.id)}
+                              >
+                                刪除
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
+
+              {/* Add Category Form */}
+              <div className="border-t pt-4">
+                <h4 className="text-sm font-semibold mb-3">新增分類</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+                  <div>
+                    <Label className="text-xs">方向</Label>
+                    <Select value={newCatDirection} onValueChange={setNewCatDirection}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="income">收入</SelectItem>
+                        <SelectItem value="expense">支出</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">群組名稱</Label>
+                    <Input
+                      value={newCatGroupName}
+                      onChange={(e) => setNewCatGroupName(e.target.value)}
+                      placeholder="如：營業收入"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">分類名稱</Label>
+                    <Input
+                      value={newCatName}
+                      onChange={(e) => setNewCatName(e.target.value)}
+                      placeholder="如：產品銷售"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">科目代碼</Label>
+                    <Input
+                      value={newCatAccountCode}
+                      onChange={(e) => setNewCatAccountCode(e.target.value)}
+                      placeholder="如：4111"
+                    />
+                  </div>
+                  <div>
+                    <Button className="w-full" onClick={handleCreateCategory} disabled={catSaving}>
+                      {catSaving ? "新增中..." : "新增分類"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ===== Tab: 資金帳戶 ===== */}
+          {settingsTab === "accounts" && (
+            <div className="space-y-4">
+              {accountsLoading ? (
+                <p className="text-center text-muted-foreground py-4">載入中...</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>名稱</TableHead>
+                      <TableHead>類型</TableHead>
+                      <TableHead>狀態</TableHead>
+                      <TableHead className="w-[180px]">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {allFundAccounts.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-muted-foreground">
+                          尚無資金帳戶
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {allFundAccounts.map((account) => {
+                      const typeLabels: Record<string, string> = {
+                        cash: "現金",
+                        bank: "銀行",
+                        credit_card: "信用卡",
+                        other: "其他",
+                      };
+                      return (
+                        <TableRow key={account.id}>
+                          <TableCell className="font-medium">{account.name}</TableCell>
+                          <TableCell>{typeLabels[account.account_type] ?? account.account_type}</TableCell>
+                          <TableCell>
+                            <Badge variant={account.is_active ? "default" : "secondary"}>
+                              {account.is_active ? "啟用" : "停用"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleToggleAccount(account)}
+                              >
+                                {account.is_active ? "停用" : "啟用"}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive"
+                                disabled={(account._count?.cashflow_records ?? 0) > 0}
+                                onClick={() => handleDeleteAccount(account.id)}
+                              >
+                                刪除
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+
+              {/* Add Account Form */}
+              <div className="border-t pt-4">
+                <h4 className="text-sm font-semibold mb-3">新增帳戶</h4>
+                <div className="flex gap-3 items-end">
+                  <div className="flex-1">
+                    <Label className="text-xs">帳戶名稱</Label>
+                    <Input
+                      value={newAccountName}
+                      onChange={(e) => setNewAccountName(e.target.value)}
+                      placeholder="如：台新銀行"
+                    />
+                  </div>
+                  <div className="w-40">
+                    <Label className="text-xs">類型</Label>
+                    <Select value={newAccountType} onValueChange={setNewAccountType}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cash">現金</SelectItem>
+                        <SelectItem value="bank">銀行</SelectItem>
+                        <SelectItem value="credit_card">信用卡</SelectItem>
+                        <SelectItem value="other">其他</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Button onClick={handleCreateAccount} disabled={accountSaving}>
+                      {accountSaving ? "新增中..." : "新增帳戶"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ===== Tab: 定期收支 ===== */}
+          {settingsTab === "recurring" && (
+            <div className="space-y-4">
+              <div className="flex justify-end">
+                <Button size="sm" onClick={() => openRecurringForm()}>
+                  新增定期收支
+                </Button>
+              </div>
+
+              {recurringLoading ? (
+                <p className="text-center text-muted-foreground py-4">載入中...</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>名稱</TableHead>
+                      <TableHead>方向</TableHead>
+                      <TableHead>分類</TableHead>
+                      <TableHead className="text-right">金額</TableHead>
+                      <TableHead>每月幾號</TableHead>
+                      <TableHead>狀態</TableHead>
+                      <TableHead className="w-[200px]">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {recurringItems.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center text-muted-foreground">
+                          尚無定期收支
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {recurringItems.map((item) => {
+                      const isIncome = item.direction === "income";
+                      return (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-medium">{item.name}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={isIncome ? "default" : "secondary"}
+                              className={isIncome ? "bg-green-600 hover:bg-green-600" : ""}
+                            >
+                              {isIncome ? "收入" : "支出"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {item.category.group_name} · {item.category.name}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {item.amount.toLocaleString()} 元
+                          </TableCell>
+                          <TableCell>第 {item.due_day} 日</TableCell>
+                          <TableCell>
+                            <Badge variant={item.is_active ? "default" : "secondary"}>
+                              {item.is_active ? "啟用" : "停用"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleToggleRecurring(item)}
+                              >
+                                {item.is_active ? "停用" : "啟用"}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openRecurringForm(item)}
+                              >
+                                編輯
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive"
+                                onClick={() => handleDeleteRecurring(item.id)}
+                              >
+                                刪除
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Recurring Add/Edit Sub-Dialog */}
+      <Dialog open={recurringFormOpen} onOpenChange={setRecurringFormOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingRecurring ? "編輯定期收支" : "新增定期收支"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>方向</Label>
+              <Select
+                value={rcDirection}
+                onValueChange={(v) => {
+                  setRcDirection(v);
+                  setRcCategoryId("");
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="income">收入</SelectItem>
+                  <SelectItem value="expense">支出</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>名稱</Label>
+              <Input
+                value={rcName}
+                onChange={(e) => setRcName(e.target.value)}
+                placeholder="如：辦公室租金"
+              />
+            </div>
+            <div>
+              <Label>分類</Label>
+              <Select value={rcCategoryId} onValueChange={setRcCategoryId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="選擇分類" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(groupedRcCategories).map(([groupName, cats]) => (
+                    <SelectGroup key={groupName}>
+                      <SelectLabel>{groupName}</SelectLabel>
+                      {cats.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>資金帳戶（選填）</Label>
+              <Select
+                value={rcFundAccountId || "__none__"}
+                onValueChange={(v) => setRcFundAccountId(v === "__none__" ? "" : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="不指定" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">不指定</SelectItem>
+                  {fundAccounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>金額（元）</Label>
+              <Input
+                type="number"
+                value={rcAmount}
+                onChange={(e) => setRcAmount(e.target.value)}
+                placeholder="金額"
+                min="0"
+                step="1"
+              />
+            </div>
+            <div>
+              <Label>每月幾號（1-28）</Label>
+              <Select value={rcDueDay} onValueChange={setRcDueDay}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                    <SelectItem key={d} value={d.toString()}>
+                      第 {d} 日
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>備註（選填）</Label>
+              <Input
+                value={rcDescription}
+                onChange={(e) => setRcDescription(e.target.value)}
+                placeholder="備註"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRecurringFormOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleSaveRecurring} disabled={rcSaving}>
+              {rcSaving ? "儲存中..." : editingRecurring ? "儲存" : "新增"}
             </Button>
           </DialogFooter>
         </DialogContent>
