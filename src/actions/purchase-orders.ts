@@ -172,6 +172,9 @@ export async function createPurchaseOrder(data: {
     throw new Error("部分食材不屬於目前組織");
   }
   const entityId = data.entity_id ?? defaultEntityId;
+  if (data.entity_id) {
+    await assertEntityOwns("entity", data.entity_id);
+  }
 
   // Pre-fetch cashflow category & fund account (read-only, safe outside tx)
   const expenseCategory = await prisma.cashflowCategory.findFirst({

@@ -256,6 +256,9 @@ export async function createCashflowRecord(data: {
 }) {
   const { orgId, entityId: defaultEntityId } = await getCurrentEntity();
   const entityId = data.entity_id ?? defaultEntityId;
+  if (data.entity_id) {
+    await assertEntityOwns("entity", data.entity_id);
+  }
 
   // Pre-fetch + validate org ownership outside transaction
   const category = await prisma.cashflowCategory.findUnique({
@@ -331,6 +334,9 @@ export async function updateCashflowRecord(
   },
 ) {
   await assertEntityOwns("cashflowRecord", id);
+  if (data.category_id) await assertOrgOwns("cashflowCategory", data.category_id);
+  if (data.fund_account_id) await assertOrgOwns("fundAccount", data.fund_account_id);
+
   const result = await prisma.$transaction(async (tx) => {
     const record = await tx.cashflowRecord.update({
       where: { id },
@@ -461,6 +467,8 @@ export async function updateRecurringCashflow(
   },
 ) {
   await assertEntityOwns("recurringCashflow", id);
+  if (data.category_id) await assertOrgOwns("cashflowCategory", data.category_id);
+  if (data.fund_account_id) await assertOrgOwns("fundAccount", data.fund_account_id);
   if (data.due_day !== undefined && (data.due_day < 1 || data.due_day > 28)) {
     throw new Error("出款日必須在 1-28 之間");
   }
