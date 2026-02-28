@@ -49,9 +49,9 @@ export function PasteDialog({ onConfirm }: PasteDialogProps) {
         </DialogHeader>
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            每行一項，格式：名稱 數量單位
+            每行一項，格式：名稱 數量單位（可選加價格）
             <br />
-            例如：乾蘿蔔絲 90台斤
+            例如：乾蘿蔔絲 90台斤 5400
           </p>
           <Textarea
             value={text}
@@ -59,7 +59,7 @@ export function PasteDialog({ onConfirm }: PasteDialogProps) {
               setText(e.target.value);
               setResult(null);
             }}
-            placeholder={`乾蘿蔔絲 90台斤\n胡椒粉 2250g\n醬油 14000cc`}
+            placeholder={`乾蘿蔔絲 90台斤 5400\n胡椒粉 2.25公斤\n醬油 14公升 238`}
             rows={6}
           />
           <Button onClick={handleParse} variant="secondary" className="w-full">
@@ -69,15 +69,16 @@ export function PasteDialog({ onConfirm }: PasteDialogProps) {
           {result && (
             <div className="space-y-2">
               {result.parsed.length > 0 && (
-                <div className="rounded border p-3 space-y-1">
+                <div className="rounded border p-3 space-y-1 max-h-60 overflow-y-auto">
                   <p className="text-sm font-medium">
                     成功解析 {result.parsed.length} 項：
                   </p>
                   {result.parsed.map((p, i) => (
                     <p key={i} className="text-sm">
                       {p.name} — {p.qty}
-                      {p.unit} → {p.qty_base.toLocaleString()}{" "}
-                      {p.measure_type === "weight" ? "g" : "cc"}
+                      {p.unit} → {(p.qty_base / 1000).toFixed(2)}{" "}
+                      {p.measure_type === "weight" ? "公斤" : "公升"}
+                      {p.price !== undefined && ` — ${p.price.toLocaleString()} 元`}
                     </p>
                   ))}
                 </div>
@@ -99,7 +100,7 @@ export function PasteDialog({ onConfirm }: PasteDialogProps) {
                 disabled={result.parsed.length === 0}
                 className="w-full"
               >
-                確認帶入
+                確認帶入 {result.parsed.length} 項
               </Button>
             </div>
           )}

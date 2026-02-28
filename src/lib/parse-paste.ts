@@ -6,6 +6,7 @@ export interface ParsedLine {
   unit: Unit;
   qty_base: number;
   measure_type: MeasureType;
+  price?: number;
 }
 
 export interface ParseResult {
@@ -13,7 +14,10 @@ export interface ParseResult {
   errors: string[];
 }
 
-const LINE_REGEX = /^(.+?)\s+([\d,.]+)\s*(g|kg|台斤|cc)$/;
+// 支援兩種格式：
+// 1. 品名 數量單位 價格   (例: 乾蘿蔔絲 90台斤 5400)
+// 2. 品名 數量單位         (例: 乾蘿蔔絲 90台斤)
+const LINE_REGEX = /^(.+?)\s+([\d,.]+)\s*(公斤|台斤|公升|毫升)\s*(?:([\d,.]+))?$/;
 
 export function parsePasteText(text: string): ParseResult {
   const lines = text.trim().split("\n").filter((l) => l.trim());
@@ -31,8 +35,14 @@ export function parsePasteText(text: string): ParseResult {
     const name = match[1].trim();
     const qty = parseFloat(match[2].replace(/,/g, ""));
     const unit = match[3] as Unit;
+    const price = match[4] ? parseFloat(match[4].replace(/,/g, "")) : undefined;
 
     if (isNaN(qty) || qty <= 0) {
+      errors.push(trimmed);
+      continue;
+    }
+
+    if (price !== undefined && (isNaN(price) || price <= 0)) {
       errors.push(trimmed);
       continue;
     }
@@ -40,7 +50,7 @@ export function parsePasteText(text: string): ParseResult {
     const qty_base = toBase(qty, unit);
     const measure_type = getMeasureTypeForUnit(unit);
 
-    parsed.push({ name, qty, unit, qty_base, measure_type });
+    parsed.push({ name, qty, unit, qty_base, measure_type, price });
   }
 
   return { parsed, errors };

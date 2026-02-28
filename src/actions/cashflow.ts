@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@/generated/prisma/client";
 import { createTransaction, deleteLinkedTransaction } from "@/actions/finance";
-import { getCurrentEntity } from "@/lib/multi-entity";
+import { getCurrentEntity, assertOrgOwns, assertEntityOwns } from "@/lib/multi-entity";
 
 // ==================== Helper ====================
 
@@ -59,6 +59,7 @@ export async function updateCashflowCategory(
   id: string,
   data: { name?: string; group_name?: string; account_code?: string },
 ) {
+  await assertOrgOwns("cashflowCategory", id);
   const category = await prisma.cashflowCategory.update({
     where: { id },
     data,
@@ -68,6 +69,7 @@ export async function updateCashflowCategory(
 }
 
 export async function deleteCashflowCategory(id: string) {
+  await assertOrgOwns("cashflowCategory", id);
   const refs = await prisma.cashflowCategory.findUnique({
     where: { id },
     select: {
@@ -127,6 +129,7 @@ export async function updateFundAccount(
   id: string,
   data: { name?: string; account_type?: string; is_active?: boolean },
 ) {
+  await assertOrgOwns("fundAccount", id);
   const account = await prisma.fundAccount.update({
     where: { id },
     data,
@@ -136,6 +139,7 @@ export async function updateFundAccount(
 }
 
 export async function deleteFundAccount(id: string) {
+  await assertOrgOwns("fundAccount", id);
   const refs = await prisma.fundAccount.findUnique({
     where: { id },
     select: {
@@ -233,6 +237,14 @@ export async function getCashflowRecords(
   };
 }
 
+/**
+ * 建立收支紀錄 + 對應 Transaction（原子操作）。
+ * @pre  category_id 存在且屬於同 org
+ * @post CashflowRecord + Transaction + JournalEntry 原子建立
+ * @note CashflowRecord.transaction_id 是 @unique FK，Prisma 不允許在 create 中設定，
+ *       因此先 create 再 update 回寫（兩步在同一 $transaction 內）
+ * @see docs/adr/002-journal-atomicity.md
+ */
 export async function createCashflowRecord(data: {
   direction: "income" | "expense";
   category_id: string;
@@ -315,6 +327,7 @@ export async function updateCashflowRecord(
     description?: string;
   },
 ) {
+  await assertEntityOwns("cashflowRecord", id);
   const result = await prisma.$transaction(async (tx) => {
     const record = await tx.cashflowRecord.update({
       where: { id },
@@ -364,6 +377,7 @@ export async function updateCashflowRecord(
 }
 
 export async function deleteCashflowRecord(id: string) {
+  await assertEntityOwns("cashflowRecord", id);
   await prisma.$transaction(async (tx) => {
     const record = await tx.cashflowRecord.findUnique({
       where: { id },
@@ -438,6 +452,7 @@ export async function updateRecurringCashflow(
     is_active?: boolean;
   },
 ) {
+  await assertEntityOwns("recurringCashflow", id);
   if (data.due_day !== undefined && (data.due_day < 1 || data.due_day > 28)) {
     throw new Error("出款日必須在 1-28 之間");
   }
@@ -451,20 +466,28 @@ export async function updateRecurringCashflow(
 }
 
 export async function deleteRecurringCashflow(id: string) {
+  await assertEntityOwns("recurringCashflow", id);
   await prisma.recurringCashflow.delete({ where: { id } });
   revalidatePath("/cashflow");
 }
 
 // ==================== 排程核心 ====================
 
-export async function generateRecurringCashflows() {
+/**
+ * 產生當日到期的循環收支紀錄。由 cron handler 呼叫。
+ * @pre  overrideEntityId 有效或 cookie 有 current entity
+ * @post 每筆到期的 RecurringCashflow 產生一筆 CashflowRecord + Transaction
+ * @fails 冪等：同月已產生過則跳過，不會重複建立
+ * @invariant 每筆 CashflowRecord 恰好對應一筆 Transaction（source_type + source_id unique）
+ */
+export async function generateRecurringCashflows(overrideEntityId?: string) {
   const today = new Date();
   const todayDay = today.getDate();
   const year = today.getFullYear();
   const month = today.getMonth(); // 0-indexed
 
   // 找所有啟用中且今天到期的循環收支
-  const { entityId } = await getCurrentEntity();
+  const entityId = overrideEntityId ?? (await getCurrentEntity()).entityId;
   const dueItems = await prisma.recurringCashflow.findMany({
     where: { entity_id: entityId, is_active: true, due_day: todayDay },
     include: { category: true, fund_account: true },

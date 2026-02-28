@@ -85,8 +85,8 @@ export function IngredientForm({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="weight">重量 (g/kg/台斤)</SelectItem>
-                <SelectItem value="volume">體積 (cc)</SelectItem>
+                <SelectItem value="weight">重量 (公斤/台斤)</SelectItem>
+                <SelectItem value="volume">體積 (公升/毫升)</SelectItem>
               </SelectContent>
             </Select>
           </div>

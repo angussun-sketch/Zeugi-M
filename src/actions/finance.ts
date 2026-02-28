@@ -7,7 +7,7 @@ import {
   generateEntries,
   type JournalEntryInput,
 } from "@/lib/journal-engine";
-import { getCurrentEntity } from "@/lib/multi-entity";
+import { getCurrentEntity, assertOrgOwns, assertEntityOwns } from "@/lib/multi-entity";
 
 type TxClient = Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
 
@@ -46,6 +46,7 @@ export async function updateAccount(
   id: string,
   data: { name?: string; is_active?: boolean; parent_id?: string | null }
 ) {
+  await assertOrgOwns("account", id);
   const account = await prisma.account.update({ where: { id }, data });
   revalidatePath("/finance/accounts");
   return account;
@@ -112,6 +113,14 @@ export async function getTransactionById(id: string) {
   });
 }
 
+/**
+ * 將 journal-engine 產生的分錄寫入 DB，取代既有分錄。
+ * @pre  必須在 prisma.$transaction 內呼叫（或自行管理 tx）
+ * @post Transaction 對應的 JournalEntry + ReconciliationItem 原子建立
+ * @fails 若 account code 不存在，fallback 到 5211（雜費）
+ * @invariant sum(debit) === sum(credit) for each JournalEntry（由 journal-engine 保證）
+ * @see docs/adr/002-journal-atomicity.md
+ */
 async function applyJournalEntries(
   transactionId: string,
   entries: GeneratedEntriesResult,
@@ -172,6 +181,13 @@ async function applyJournalEntries(
 
 type GeneratedEntriesResult = ReturnType<typeof generateEntries>;
 
+/**
+ * 建立交易 + 自動產生會計分錄。
+ * @pre  entity_id 有效或 cookie 有 current entity
+ * @post Transaction + JournalEntry + ReconciliationItem 原子寫入
+ * @fails source_type + source_id 重複 → unique constraint violation
+ * @invariant 每筆 Transaction 對應 1 筆內帳分錄 + 0-1 筆外帳分錄
+ */
 export async function createTransaction(data: {
   transaction_date: string;
   amount: number;
@@ -251,6 +267,11 @@ export async function createTransaction(data: {
   return tx;
 }
 
+/**
+ * @pre  assertEntityOwns 通過；Transaction.status !== "voided"
+ * @post 在 $transaction 內更新 Transaction + 重建所有 JournalEntry
+ * @invariant 部分失敗時整筆回滾，不會留下不一致的分錄
+ */
 export async function updateTransaction(
   id: string,
   data: {
@@ -276,70 +297,88 @@ export async function updateTransaction(
     expense_category_name?: string;
   }
 ) {
-  // 計算匹配狀態
-  const current = await prisma.transaction.findUnique({ where: { id } });
-  if (!current) throw new Error("交易不存在");
+  await assertEntityOwns("transaction", id);
 
-  const hp = data.has_payment ?? current.has_payment;
-  const hr = data.has_receipt ?? current.has_receipt;
-  const hi = data.has_invoice ?? current.has_invoice;
-  const trueCount = [hp, hr, hi].filter(Boolean).length;
-  const match_status =
-    trueCount === 3 ? "fully_matched" : trueCount > 0 ? "partial" : "unmatched";
+  const result = await prisma.$transaction(async (db) => {
+    // 計算匹配狀態
+    const current = await db.transaction.findUnique({ where: { id } });
+    if (!current) throw new Error("交易不存在");
 
-  const updateData: Record<string, unknown> = { ...data, match_status };
-  if (data.transaction_date) {
-    updateData.transaction_date = new Date(data.transaction_date);
-  }
-  delete updateData.expense_category_name;
+    const hp = data.has_payment ?? current.has_payment;
+    const hr = data.has_receipt ?? current.has_receipt;
+    const hi = data.has_invoice ?? current.has_invoice;
+    const trueCount = [hp, hr, hi].filter(Boolean).length;
+    const match_status =
+      trueCount === 3 ? "fully_matched" : trueCount > 0 ? "partial" : "unmatched";
 
-  const tx = await prisma.transaction.update({
-    where: { id },
-    data: updateData,
+    const updateData: Record<string, unknown> = { ...data, match_status };
+    if (data.transaction_date) {
+      updateData.transaction_date = new Date(data.transaction_date);
+    }
+    delete updateData.expense_category_name;
+
+    const tx = await db.transaction.update({
+      where: { id },
+      data: updateData,
+    });
+
+    // 重新產生分錄
+    const entries = generateEntries({
+      ...tx,
+      expense_category_name: data.expense_category_name,
+    });
+    await applyJournalEntries(tx.id, entries, tx.entity_id, db);
+
+    return tx;
   });
-
-  // 重新產生分錄
-  const entries = generateEntries({
-    ...tx,
-    expense_category_name: data.expense_category_name,
-  });
-  await applyJournalEntries(tx.id, entries, tx.entity_id);
 
   revalidatePath("/finance");
-  return tx;
+  return result;
 }
 
 export async function deleteTransaction(id: string) {
+  await assertEntityOwns("transaction", id);
   await prisma.transaction.delete({ where: { id } });
   revalidatePath("/finance");
 }
 
 export async function postTransaction(id: string) {
-  const tx = await prisma.transaction.update({
-    where: { id },
-    data: { status: "posted" },
+  await assertEntityOwns("transaction", id);
+
+  const result = await prisma.$transaction(async (db) => {
+    const tx = await db.transaction.update({
+      where: { id },
+      data: { status: "posted" },
+    });
+    // 同步過帳分錄
+    await db.journalEntry.updateMany({
+      where: { transaction_id: id },
+      data: { is_posted: true },
+    });
+    return tx;
   });
-  // 同步過帳分錄
-  await prisma.journalEntry.updateMany({
-    where: { transaction_id: id },
-    data: { is_posted: true },
-  });
+
   revalidatePath("/finance");
-  return tx;
+  return result;
 }
 
 export async function voidTransaction(id: string) {
-  await prisma.transaction.update({
-    where: { id },
-    data: { status: "voided" },
+  await assertEntityOwns("transaction", id);
+
+  await prisma.$transaction(async (db) => {
+    await db.transaction.update({
+      where: { id },
+      data: { status: "voided" },
+    });
+    // 刪除分錄
+    await db.journalEntry.deleteMany({
+      where: { transaction_id: id },
+    });
+    await db.reconciliationItem.deleteMany({
+      where: { transaction_id: id },
+    });
   });
-  // 刪除分錄
-  await prisma.journalEntry.deleteMany({
-    where: { transaction_id: id },
-  });
-  await prisma.reconciliationItem.deleteMany({
-    where: { transaction_id: id },
-  });
+
   revalidatePath("/finance");
 }
 
@@ -397,20 +436,22 @@ export async function getAccountBalance(
   dateFrom?: string,
   dateTo?: string
 ) {
+  const { orgId } = await getCurrentEntity();
+  const entryWhere: Record<string, unknown> = {
+    entity: { org_id: orgId },
+  };
+  if (bookType) entryWhere.book_type = bookType;
+  if (dateFrom || dateTo) {
+    entryWhere.entry_date = {
+      ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+      ...(dateTo ? { lte: new Date(dateTo + "T23:59:59") } : {}),
+    };
+  }
+
   const where: Record<string, unknown> = {
     account_id: accountId,
+    entry: entryWhere,
   };
-  if (bookType || dateFrom || dateTo) {
-    const entryWhere: Record<string, unknown> = {};
-    if (bookType) entryWhere.book_type = bookType;
-    if (dateFrom || dateTo) {
-      entryWhere.entry_date = {
-        ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
-        ...(dateTo ? { lte: new Date(dateTo + "T23:59:59") } : {}),
-      };
-    }
-    where.entry = entryWhere;
-  }
 
   const result = await prisma.journalLine.aggregate({
     where,
@@ -427,8 +468,13 @@ export async function getAccountBalance(
 // ============ 調節 ============
 
 export async function getReconciliation(year: number, month: number) {
+  const { orgId } = await getCurrentEntity();
   return prisma.reconciliationItem.findMany({
-    where: { period_year: year, period_month: month },
+    where: {
+      period_year: year,
+      period_month: month,
+      transaction: { entity: { org_id: orgId } },
+    },
     include: {
       transaction: {
         select: { id: true, description: true, amount: true, tax_treatment: true },
@@ -468,10 +514,12 @@ export async function getIncomeStatement(
   dateFrom: string,
   dateTo: string
 ) {
+  const { orgId } = await getCurrentEntity();
   // 取得所有收入+費用科目的彙總
   const lines = await prisma.journalLine.findMany({
     where: {
       entry: {
+        entity: { org_id: orgId },
         book_type: bookType,
         entry_date: {
           gte: new Date(dateFrom),
@@ -525,9 +573,11 @@ export async function getIncomeStatement(
 }
 
 export async function getTrialBalance(bookType: string, dateTo: string) {
+  const { orgId } = await getCurrentEntity();
   const lines = await prisma.journalLine.findMany({
     where: {
       entry: {
+        entity: { org_id: orgId },
         book_type: bookType,
         entry_date: { lte: new Date(dateTo + "T23:59:59") },
       },
@@ -610,13 +660,19 @@ export async function createTransactionFromPO(
 
 // ============ Transaction Helper ============
 
+/**
+ * 透過 @@unique(source_type, source_id) compound key 刪除關聯交易。
+ * @pre  建議在 $transaction 內呼叫
+ * @post cascade 刪除 JournalEntry + ReconciliationItem（由 schema onDelete 保證）
+ * @note source_id nullable → PostgreSQL unique 允許多個 NULL，不影響手動交易
+ */
 export async function deleteLinkedTransaction(
   sourceType: string,
   sourceId: string,
   db: TxClient | PrismaClient = prisma,
 ) {
-  const existing = await db.transaction.findFirst({
-    where: { source_type: sourceType, source_id: sourceId },
+  const existing = await db.transaction.findUnique({
+    where: { source_type_source_id: { source_type: sourceType, source_id: sourceId } },
     select: { id: true },
   });
   if (existing) {

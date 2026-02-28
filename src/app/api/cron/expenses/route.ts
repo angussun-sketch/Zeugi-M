@@ -1,5 +1,6 @@
 import { generateRecurringCashflows } from "@/actions/cashflow";
 import { generateMonthlyDepreciation } from "@/actions/fixed-assets";
+import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
@@ -12,13 +13,20 @@ export async function GET(request: Request) {
     }
   }
 
-  const [cashflowResult, depreciationResult] = await Promise.all([
-    generateRecurringCashflows(),
-    generateMonthlyDepreciation(),
-  ]);
-
-  return NextResponse.json({
-    cashflow: cashflowResult,
-    depreciation: depreciationResult,
+  // 遍歷所有啟用中的 Entity
+  const entities = await prisma.entity.findMany({
+    where: { is_active: true },
+    select: { id: true, name: true },
   });
+
+  const results = [];
+  for (const entity of entities) {
+    const [cashflow, depreciation] = await Promise.all([
+      generateRecurringCashflows(entity.id),
+      generateMonthlyDepreciation(entity.id),
+    ]);
+    results.push({ entity: entity.name, cashflow, depreciation });
+  }
+
+  return NextResponse.json({ results });
 }

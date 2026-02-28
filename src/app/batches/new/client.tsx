@@ -14,12 +14,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Separator } from "@/components/ui/separator";
 import { PasteDialog } from "@/components/paste-dialog";
 import { createBatch } from "@/actions/batches";
 import {
   getUnitsForType,
   toBase,
+  unitLabel,
   type MeasureType,
   type Unit,
 } from "@/lib/units";
@@ -29,7 +29,7 @@ type IngredientOption = {
   id: string;
   name: string;
   measure_type: string;
-  purchase_records: { unit_cost_base: number }[];
+  unit_cost_base: number | null;
 };
 
 interface InputRow {
@@ -44,6 +44,7 @@ interface OutputRow {
   flavor_name: string;
   pieces: string;
   filling_g_per_piece: string;
+  skin_g_per_piece: string;
 }
 
 export function BatchNewClient({
@@ -55,17 +56,19 @@ export function BatchNewClient({
   const [name, setName] = useState("");
   const [allocMethod, setAllocMethod] = useState("by_pieces");
   const [inputs, setInputs] = useState<InputRow[]>([
-    { ingredient_id: "", qty_input: "", input_unit: "g", is_shared: true },
+    { ingredient_id: "", qty_input: "", input_unit: "台斤", is_shared: true },
   ]);
   const [outputs, setOutputs] = useState<OutputRow[]>([
-    { flavor_name: "", pieces: "", filling_g_per_piece: "" },
+    { flavor_name: "", pieces: "", filling_g_per_piece: "", skin_g_per_piece: "" },
   ]);
   const [loading, setLoading] = useState(false);
+
+  const hasMultipleFlavors = outputs.length > 1;
 
   function addInput() {
     setInputs([
       ...inputs,
-      { ingredient_id: "", qty_input: "", input_unit: "g", is_shared: true },
+      { ingredient_id: "", qty_input: "", input_unit: "台斤", is_shared: true },
     ]);
   }
 
@@ -78,12 +81,11 @@ export function BatchNewClient({
       inputs.map((row, i) => {
         if (i !== index) return row;
         const updated = { ...row, [field]: value };
-        // Auto-set unit when ingredient changes
         if (field === "ingredient_id") {
           const ing = ingredients.find((g) => g.id === value);
           if (ing) {
             updated.input_unit =
-              ing.measure_type === "weight" ? "g" : "cc";
+              ing.measure_type === "weight" ? "台斤" : "公升";
           }
         }
         return updated;
@@ -94,7 +96,7 @@ export function BatchNewClient({
   function addOutput() {
     setOutputs([
       ...outputs,
-      { flavor_name: "", pieces: "", filling_g_per_piece: "" },
+      { flavor_name: "", pieces: "", filling_g_per_piece: "", skin_g_per_piece: "" },
     ]);
   }
 
@@ -110,9 +112,7 @@ export function BatchNewClient({
 
   function handlePasteConfirm(parsed: ParsedLine[]) {
     const newInputs: InputRow[] = parsed.map((p) => {
-      const existing = ingredients.find(
-        (ing) => ing.name === p.name
-      );
+      const existing = ingredients.find((ing) => ing.name === p.name);
       return {
         ingredient_id: existing?.id || "",
         qty_input: p.qty.toString(),
@@ -128,16 +128,19 @@ export function BatchNewClient({
     if (isNaN(qty) || qty <= 0) return "";
     const base = toBase(qty, row.input_unit as Unit);
     const ing = ingredients.find((g) => g.id === row.ingredient_id);
-    const baseUnit = ing?.measure_type === "volume" ? "cc" : "g";
-    return `= ${base.toLocaleString()} ${baseUnit}`;
+    const baseUnit = ing?.measure_type === "volume" ? "公升" : "公斤";
+    const displayQty = base / 1000;
+    return `= ${displayQty.toFixed(2)} ${baseUnit}`;
   }
 
-  function getUnitCostPreview(row: InputRow): string {
+  function getCostPreview(row: InputRow): string {
+    const qty = parseFloat(row.qty_input);
+    if (isNaN(qty) || qty <= 0) return "";
     const ing = ingredients.find((g) => g.id === row.ingredient_id);
-    if (!ing || !ing.purchase_records[0]) return "";
-    const unitCost = ing.purchase_records[0].unit_cost_base;
-    const baseUnit = ing.measure_type === "volume" ? "cc" : "g";
-    return `單價: ${unitCost.toFixed(4)} 元/${baseUnit}`;
+    if (!ing || ing.unit_cost_base === null) return "";
+    const base = toBase(qty, row.input_unit as Unit);
+    const cost = base * ing.unit_cost_base;
+    return `成本: ${cost.toFixed(2)} 元`;
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -146,17 +149,18 @@ export function BatchNewClient({
     try {
       const batchId = await createBatch({
         name,
-        alloc_method: allocMethod,
+        alloc_method: hasMultipleFlavors ? allocMethod : "by_pieces",
         inputs: inputs
           .filter((i) => i.ingredient_id && i.qty_input)
           .map((i) => ({
             ingredient_id: i.ingredient_id,
             qty_input: parseFloat(i.qty_input),
             input_unit: i.input_unit,
-            is_shared: i.is_shared,
-            dedicated_to_index: i.is_shared
-              ? undefined
-              : i.dedicated_to_index,
+            is_shared: hasMultipleFlavors ? i.is_shared : true,
+            dedicated_to_index:
+              hasMultipleFlavors && !i.is_shared
+                ? i.dedicated_to_index
+                : undefined,
           })),
         outputs: outputs
           .filter((o) => o.flavor_name && o.pieces)
@@ -165,6 +169,9 @@ export function BatchNewClient({
             pieces: parseInt(o.pieces),
             filling_g_per_piece: o.filling_g_per_piece
               ? parseFloat(o.filling_g_per_piece)
+              : undefined,
+            skin_g_per_piece: o.skin_g_per_piece
+              ? parseFloat(o.skin_g_per_piece)
               : undefined,
           })),
       });
@@ -176,21 +183,21 @@ export function BatchNewClient({
 
   return (
     <div className="max-w-4xl space-y-6">
-      <h1 className="text-2xl font-bold">建立批次</h1>
+      <h1 className="text-2xl font-bold">建立配方</h1>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Batch name */}
+        {/* 配方名稱 */}
         <div>
-          <Label>批次名稱</Label>
+          <Label>配方名稱</Label>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="例如：2024/01 蘿蔔絲餅"
+            placeholder="例如：草仔粿生產配方"
             required
           />
         </div>
 
-        {/* Outputs (flavors) - placed before inputs so dedicated_to can reference them */}
+        {/* 口味產出 */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base">口味產出</CardTitle>
@@ -220,13 +227,25 @@ export function BatchNewClient({
                   />
                 </div>
                 <div className="w-32">
-                  <Label>每顆餡料(g)</Label>
+                  <Label>每顆餡料(公克)</Label>
                   <Input
                     type="number"
                     step="0.1"
                     value={row.filling_g_per_piece}
                     onChange={(e) =>
                       updateOutput(i, "filling_g_per_piece", e.target.value)
+                    }
+                    placeholder="選填"
+                  />
+                </div>
+                <div className="w-32">
+                  <Label>每顆皮料(公克)</Label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    value={row.skin_g_per_piece}
+                    onChange={(e) =>
+                      updateOutput(i, "skin_g_per_piece", e.target.value)
                     }
                     placeholder="選填"
                   />
@@ -249,33 +268,33 @@ export function BatchNewClient({
           </CardContent>
         </Card>
 
-        {/* Allocation method */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">共用原料分攤規則</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <RadioGroup value={allocMethod} onValueChange={setAllocMethod}>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="by_pieces" id="by_pieces" />
-                <Label htmlFor="by_pieces">按顆數比例分攤</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem
-                  value="by_filling_weight"
-                  id="by_filling_weight"
-                />
-                <Label htmlFor="by_filling_weight">
-                  按餡料重量比例分攤 (顆數 × 每顆餡料g)
-                </Label>
-              </div>
-            </RadioGroup>
-          </CardContent>
-        </Card>
+        {/* 多口味時才顯示分攤規則 */}
+        {hasMultipleFlavors && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">共用原料分攤規則</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <RadioGroup value={allocMethod} onValueChange={setAllocMethod}>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="by_pieces" id="by_pieces" />
+                  <Label htmlFor="by_pieces">按顆數比例分攤</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem
+                    value="by_filling_weight"
+                    id="by_filling_weight"
+                  />
+                  <Label htmlFor="by_filling_weight">
+                    按餡料重量比例分攤 (顆數 × 每顆餡料公克)
+                  </Label>
+                </div>
+              </RadioGroup>
+            </CardContent>
+          </Card>
+        )}
 
-        <Separator />
-
-        {/* Inputs (ingredients) */}
+        {/* 原料投入 */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -285,12 +304,10 @@ export function BatchNewClient({
           </CardHeader>
           <CardContent className="space-y-3">
             {inputs.map((row, i) => {
-              const ing = ingredients.find(
-                (g) => g.id === row.ingredient_id
-              );
+              const ing = ingredients.find((g) => g.id === row.ingredient_id);
               const units = ing
                 ? getUnitsForType(ing.measure_type as MeasureType)
-                : ["g", "kg", "台斤", "cc"];
+                : (["公斤", "台斤", "公升", "毫升"] as const);
 
               return (
                 <div key={i} className="rounded border p-3 space-y-2">
@@ -341,7 +358,7 @@ export function BatchNewClient({
                         <SelectContent>
                           {units.map((u) => (
                             <SelectItem key={u} value={u}>
-                              {u}
+                              {unitLabel(u)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -359,50 +376,50 @@ export function BatchNewClient({
                     )}
                   </div>
 
-                  {/* Preview */}
+                  {/* 成本預覽 */}
                   <div className="flex gap-4 text-xs text-muted-foreground">
                     {getQtyBasePreview(row) && (
                       <span>{getQtyBasePreview(row)}</span>
                     )}
-                    {getUnitCostPreview(row) && (
-                      <span>{getUnitCostPreview(row)}</span>
+                    {getCostPreview(row) && (
+                      <span>{getCostPreview(row)}</span>
                     )}
                   </div>
 
-                  {/* Shared/Dedicated toggle */}
-                  <div className="flex items-center gap-3">
-                    <label className="flex items-center gap-1 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={row.is_shared}
-                        onChange={(e) =>
-                          updateInput(i, "is_shared", e.target.checked)
-                        }
-                      />
-                      共用原料
-                    </label>
-                    {!row.is_shared && outputs.length > 0 && (
-                      <Select
-                        value={
-                          row.dedicated_to_index?.toString() ?? "0"
-                        }
-                        onValueChange={(v) =>
-                          updateInput(i, "dedicated_to_index", parseInt(v))
-                        }
-                      >
-                        <SelectTrigger className="w-40">
-                          <SelectValue placeholder="歸屬口味" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {outputs.map((o, oi) => (
-                            <SelectItem key={oi} value={oi.toString()}>
-                              {o.flavor_name || `口味 ${oi + 1}`}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  </div>
+                  {/* 多口味時才顯示共用/專用 */}
+                  {hasMultipleFlavors && (
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-1 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={row.is_shared}
+                          onChange={(e) =>
+                            updateInput(i, "is_shared", e.target.checked)
+                          }
+                        />
+                        共用原料
+                      </label>
+                      {!row.is_shared && outputs.length > 0 && (
+                        <Select
+                          value={row.dedicated_to_index?.toString() ?? "0"}
+                          onValueChange={(v) =>
+                            updateInput(i, "dedicated_to_index", parseInt(v))
+                          }
+                        >
+                          <SelectTrigger className="w-40">
+                            <SelectValue placeholder="歸屬口味" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {outputs.map((o, oi) => (
+                              <SelectItem key={oi} value={oi.toString()}>
+                                {o.flavor_name || `口味 ${oi + 1}`}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -413,7 +430,7 @@ export function BatchNewClient({
         </Card>
 
         <Button type="submit" disabled={loading} size="lg" className="w-full">
-          {loading ? "計算中..." : "建立批次並計算"}
+          {loading ? "建立中..." : "建立配方"}
         </Button>
       </form>
     </div>

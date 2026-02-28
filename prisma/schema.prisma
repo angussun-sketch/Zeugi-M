@@ -405,7 +405,7 @@ model Transaction {
   cashflow_record        CashflowRecord?
 
   @@index([transaction_date])
-  @@index([source_type, source_id])
+  @@unique([source_type, source_id])
   @@index([match_status])
   @@index([entity_id])
   @@index([status])

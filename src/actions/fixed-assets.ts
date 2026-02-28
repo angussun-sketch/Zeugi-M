@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 import { createTransaction, deleteLinkedTransaction } from "@/actions/finance";
-import { getCurrentEntity } from "@/lib/multi-entity";
+import { getCurrentEntity, assertEntityOwns } from "@/lib/multi-entity";
 import { ASSET_ACCOUNT, ACCUM_DEPR_ACCOUNT } from "@/lib/chart-of-accounts";
 
 // ============ 固定資產 CRUD ============
@@ -98,6 +98,7 @@ export async function updateFixedAsset(
     useful_life_years?: number;
   }
 ) {
+  await assertEntityOwns("fixedAsset", id);
   const current = await prisma.fixedAsset.findUnique({ where: { id } });
   if (!current) throw new Error("資產不存在");
 
@@ -131,6 +132,7 @@ export async function updateFixedAsset(
 }
 
 export async function deleteFixedAsset(id: string) {
+  await assertEntityOwns("fixedAsset", id);
   const asset = await prisma.fixedAsset.findUnique({
     where: { id },
     include: { _count: { select: { depreciation_records: true } } },
@@ -152,6 +154,7 @@ export async function deleteFixedAsset(id: string) {
 }
 
 export async function disposeFixedAsset(id: string) {
+  await assertEntityOwns("fixedAsset", id);
   const asset = await prisma.fixedAsset.findUnique({ where: { id } });
   if (!asset) throw new Error("資產不存在");
 
@@ -165,13 +168,13 @@ export async function disposeFixedAsset(id: string) {
 
 // ============ 折舊排程 ============
 
-export async function generateMonthlyDepreciation() {
+export async function generateMonthlyDepreciation(overrideEntityId?: string) {
   const today = new Date();
   const year = today.getFullYear();
   const month = today.getMonth() + 1;
 
   // 找出所有需要折舊的資產
-  const { entityId } = await getCurrentEntity();
+  const entityId = overrideEntityId ?? (await getCurrentEntity()).entityId;
   const assets = await prisma.fixedAsset.findMany({
     where: { entity_id: entityId, is_active: true, is_fully_depreciated: false },
   });

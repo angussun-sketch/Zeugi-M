@@ -18,14 +18,38 @@ export default function HomePage() {
             </CardContent>
           </Card>
         </Link>
-        <Link href="/batches/new">
+        <Link href="/purchase-orders">
           <Card className="hover:shadow-md transition-shadow cursor-pointer">
             <CardHeader>
-              <CardTitle className="text-base">建立批次</CardTitle>
+              <CardTitle className="text-base">叫貨單</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">
-                投料計算成本分攤
+                管理叫貨訂單與採購紀錄
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/suppliers">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+            <CardHeader>
+              <CardTitle className="text-base">供應商</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                管理供應商與分類
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/batches/new">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+            <CardHeader>
+              <CardTitle className="text-base">建立配方</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                新增產品配方與投料計算
               </p>
             </CardContent>
           </Card>
@@ -33,11 +57,11 @@ export default function HomePage() {
         <Link href="/batches">
           <Card className="hover:shadow-md transition-shadow cursor-pointer">
             <CardHeader>
-              <CardTitle className="text-base">批次紀錄</CardTitle>
+              <CardTitle className="text-base">產品菜單</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">
-                查看歷史批次與成本
+                查看配方、成本與生產 SOP
               </p>
             </CardContent>
           </Card>
