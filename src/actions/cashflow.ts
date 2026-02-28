@@ -493,47 +493,53 @@ export async function generateRecurringCashflows() {
       continue;
     }
 
-    // 產生紀錄
-    const genRecord = await prisma.cashflowRecord.create({
-      data: {
-        direction: item.direction,
-        category_id: item.category_id,
-        fund_account_id: item.fund_account_id,
-        amount: item.amount,
-        record_date: today,
-        description: `${item.name}（自動產生）`,
-        source: "recurring",
-        recurring_cashflow_id: item.id,
-        entity_id: entityId,
-      },
-    });
-
-    // 自動產生財務交易
+    // 產生紀錄 + 財務交易（原子化）
     const sourceType =
       item.direction === "income" ? "cashflow_income" : "cashflow_expense";
     const paymentMethod = item.fund_account
       ? fundAccountToPaymentMethod(item.fund_account.account_type)
       : "cash";
 
-    await createTransaction({
-      transaction_date: today.toISOString(),
-      amount: item.amount,
-      description: `${item.name}（自動產生）`,
-      source_type: sourceType,
-      source_id: genRecord.id,
-      payment_method: paymentMethod,
-      has_payment: true,
-      has_receipt: false,
-      has_invoice: false,
-      tax_treatment: "deductible",
-      expense_category_name: item.category.account_code,
-      entity_id: entityId,
-    });
+    await prisma.$transaction(async (tx) => {
+      const genRecord = await tx.cashflowRecord.create({
+        data: {
+          direction: item.direction,
+          category_id: item.category_id,
+          fund_account_id: item.fund_account_id,
+          amount: item.amount,
+          record_date: today,
+          description: `${item.name}（自動產生）`,
+          source: "recurring",
+          recurring_cashflow_id: item.id,
+          entity_id: entityId,
+        },
+      });
 
-    // 更新 last_generated
-    await prisma.recurringCashflow.update({
-      where: { id: item.id },
-      data: { last_generated: today },
+      const transaction = await createTransaction({
+        transaction_date: today.toISOString(),
+        amount: item.amount,
+        description: `${item.name}（自動產生）`,
+        source_type: sourceType,
+        source_id: genRecord.id,
+        payment_method: paymentMethod,
+        has_payment: true,
+        has_receipt: false,
+        has_invoice: false,
+        tax_treatment: "deductible",
+        expense_category_name: item.category.account_code,
+        entity_id: entityId,
+      }, tx);
+
+      // Write back transaction_id FK
+      await tx.cashflowRecord.update({
+        where: { id: genRecord.id },
+        data: { transaction_id: transaction.id },
+      });
+
+      await tx.recurringCashflow.update({
+        where: { id: item.id },
+        data: { last_generated: today },
+      });
     });
 
     results.push({ name: item.name, created: true });
