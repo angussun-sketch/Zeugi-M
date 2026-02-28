@@ -52,6 +52,10 @@ const accounts = [
   { code: "4111", name: "銷貨收入", type: "revenue" },
   { code: "4141", name: "其他營業收入", type: "revenue" },
 
+  // ── 71 營業外收益 ──
+  { code: "7111", name: "利息收入", type: "revenue" },
+  { code: "7151", name: "利息費用", type: "expense" },
+
   // ── 511 銷貨成本 ──
   { code: "5111", name: "銷貨成本", type: "expense" },
 
